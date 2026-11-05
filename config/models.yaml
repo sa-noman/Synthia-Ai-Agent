@@ -1,0 +1,78 @@
+# ==========================================================
+#  Synthia - মডেল তালিকা (Brain)
+# ----------------------------------------------------------
+#  - local মডেল নেট ছাড়াই চলে (Ollama)
+#  - cloud মডেল চলবে শুধু যদি .env ফাইলে তার API key দেওয়া থাকে
+#  - priority: ছোট সংখ্যা = আগে চেষ্টা করবে (auto মোডে)
+#  - একটার লিমিট শেষ হলে (429 / quota) অটোমেটিক পরেরটায় সুইচ করবে
+#  - নতুন ফ্রি API যোগ করতে নিচে আরেকটা ব্লক কপি করে বসান
+#  - মডেলের নাম প্রোভাইডাররা মাঝে মাঝে বদলায়; দরকার হলে "model" লাইন আপডেট করুন
+# ==========================================================
+models:
+  # ---------------- LOCAL (অফলাইন) ----------------
+  - id: local-gemma4
+    label: "Gemma 4 E4B (Local)"
+    provider: ollama
+    base_url: http://127.0.0.1:11434
+    model: gemma4:e4b
+    vision: true
+    priority: 100          # auto মোডে সবশেষ ভরসা (offline fallback)
+    num_ctx: 8192
+
+  # ---------------- CLOUD (ফ্রি API) ----------------
+  - id: gemini-flash
+    label: "Gemini Flash (Google AI Studio)"
+    provider: openai_compat
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    model: gemini-2.5-flash
+    api_key_env: GEMINI_API_KEY
+    vision: true
+    priority: 10
+
+  - id: groq-llama
+    label: "Llama 3.3 70B (Groq)"
+    provider: openai_compat
+    base_url: https://api.groq.com/openai/v1
+    model: llama-3.3-70b-versatile
+    api_key_env: GROQ_API_KEY
+    priority: 20
+
+  - id: cerebras-llama
+    label: "Llama 3.3 70B (Cerebras)"
+    provider: openai_compat
+    base_url: https://api.cerebras.ai/v1
+    model: llama-3.3-70b
+    api_key_env: CEREBRAS_API_KEY
+    priority: 30
+
+  - id: openrouter-free
+    label: "OpenRouter (Free models)"
+    provider: openai_compat
+    base_url: https://openrouter.ai/api/v1
+    model: meta-llama/llama-3.3-70b-instruct:free
+    api_key_env: OPENROUTER_API_KEY
+    priority: 40
+
+  - id: mistral-small
+    label: "Mistral Small (Mistral AI)"
+    provider: openai_compat
+    base_url: https://api.mistral.ai/v1
+    model: mistral-small-latest
+    api_key_env: MISTRAL_API_KEY
+    priority: 50
+
+  - id: github-gpt
+    label: "GPT-4.1 mini (GitHub Models)"
+    provider: openai_compat
+    base_url: https://models.github.ai/inference
+    model: openai/gpt-4.1-mini
+    api_key_env: GITHUB_TOKEN
+    priority: 60
+
+  - id: nvidia-nim
+    label: "Llama 3.3 70B (NVIDIA NIM)"
+    provider: openai_compat
+    base_url: https://integrate.api.nvidia.com/v1
+    model: meta/llama-3.3-70b-instruct
+    api_key_env: NVIDIA_API_KEY
+    priority: 70

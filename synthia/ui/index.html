@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SYNTHIA · Command Bridge</title>
+<link rel="icon" href="/favicon.ico" />
+<link rel="stylesheet" href="/ui/style.css" />
+</head>
+<body>
+<div id="app">
+  <!-- ================= TOP BAR (Original Clean Layout) ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-orb"></div>
+      <span class="brand-name">SYNTHIA</span>
+      <span class="brand-sub">COMMAND BRIDGE · <span id="ver">v0.1.0</span></span>
+    </div>
+
+    <button class="chip chip-accent" id="btnModels">⚡ Models &amp; Keys</button>
+
+    <div class="drop-wrap" id="modelDropWrap">
+      <button class="chip" id="btnModelDrop" title="Click to switch active model">
+        <span class="dot dot-ok" id="brainDot"></span>
+        <span id="activeModel">Gemma 4 E4B (Local)</span>
+        <span class="caret">▾</span>
+      </button>
+      <div class="drop-menu" id="modelDropMenu" hidden></div>
+    </div>
+
+    <div class="seg" id="topModeSeg" title="Brain routing mode">
+      <button data-mode="auto" class="active">Auto</button>
+      <button data-mode="manual">Manual</button>
+    </div>
+
+    <div class="chip" id="chipNet">
+      <span class="dot dot-ok" id="netDot"></span>
+      <span id="netText">Online · Cloud ready</span>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="seg" id="themeSeg" title="থিম মোড পরিবর্তন করুন">
+      <button data-theme="neon" class="active">3D Neon</button>
+      <button data-theme="aurora">Aurora</button>
+      <button data-theme="paper">Paper</button>
+    </div>
+
+    <span class="chip chip-ghost">Kill: Ctrl+Shift+X</span>
+    <button class="chip chip-danger" id="btnKill" title="Emergency Stop (Ctrl+Shift+X)">⛔ STOP</button>
+    <div class="clock" id="clock">00:00:00</div>
+  </header>
+
+  <!-- ================= RESIZABLE WORKSPACE ================= -->
+  <main class="workspace" id="workspace">
+    <!-- ========== LEFT COLUMN ========== -->
+    <aside class="col col-left" id="colLeft">
+      <section class="panel sec-telemetry" id="secTelemetry">
+        <div class="panel-head"><span>TELEMETRY</span><span class="muted" id="uptime">Uptime —</span></div>
+        <div class="meter"><label>CPU</label><div class="bar"><i id="barCpu"></i></div><b id="valCpu">0%</b></div>
+        <div class="meter"><label>RAM</label><div class="bar"><i id="barRam"></i></div><b id="valRam">—</b></div>
+        <div class="meter"><label>GPU</label><div class="bar"><i id="barGpu"></i></div><b id="valGpu">—</b></div>
+        <div class="meter"><label>VRAM</label><div class="bar"><i id="barVram"></i></div><b id="valVram">—</b></div>
+        <div class="meter"><label>DISK</label><div class="bar"><i id="barDisk"></i></div><b id="valDisk">—</b></div>
+      </section>
+
+      <div class="splitter splitter-h" data-split="leftTop" title="টেনে বড়-ছোট করুন (ডাবল-ক্লিক = রিসেট)"></div>
+
+      <section class="panel grow sec-signals" id="secSignals">
+        <div class="panel-head"><span>LIVE SIGNALS</span><span class="muted" id="sigCount">0 logged</span></div>
+        <ul class="signals" id="signals"></ul>
+      </section>
+
+      <div class="splitter splitter-h" data-split="leftBot" title="টেনে বড়-ছোট করুন (ডাবল-ক্লিক = রিসেট)"></div>
+
+      <section class="panel sec-qa" id="secQa">
+        <div class="panel-head"><span>QUICK ACTIONS</span><span class="muted">1-Click</span></div>
+        <div class="qa" id="quickActions">
+          <button data-cmd="আমার পিসির অবস্থা (CPU, RAM, GPU, Disk) জানাও">🖥️ System</button>
+          <button data-cmd="আমার Downloads ফোল্ডারে সবচেয়ে নতুন ১০টা ফাইল দেখাও">📥 Downloads</button>
+          <button data-prompt="ইউটিউবে চালাও: ">▶️ YouTube</button>
+          <button data-prompt="এই বিষয়ে গবেষণা করে সংক্ষেপে রিপোর্ট দাও: ">🔎 Research</button>
+          <button data-cmd="আজ ঢাকার আবহাওয়া কেমন? ওয়েবে সার্চ করে জানাও">🌦️ Weather</button>
+          <button data-cmd="আজকের বাংলাদেশের প্রধান খবরগুলো ওয়েব সার্চ করে ৫ লাইনে বলো">📰 News</button>
+          <button data-cmd="আজকের USD to BDT রেট কত? ওয়েবে সার্চ করে বলো">💱 USD/BDT</button>
+          <button data-prompt="অ্যাপ খোলো: ">🚀 Open App</button>
+          <button data-cmd="workspace ফোল্ডারটা খোলো">📂 Workspace</button>
+          <button data-cmd="তুমি কী কী মনে রেখেছো সব দেখাও">🧠 Memory</button>
+          <button class="soon" title="পরবর্তী ধাপে আসছে">🎬 Studio</button>
+          <button class="soon" title="পরবর্তী ধাপে আসছে">📡 Remote</button>
+        </div>
+      </section>
+    </aside>
+
+    <div class="splitter splitter-v" data-split="colLeft" title="বাম প্যানেল টেনে বড়-ছোট করুন (ডাবল-ক্লিক = রিসেট)"></div>
+
+    <!-- ========== CENTER COLUMN ========== -->
+    <section class="col col-center" id="colCenter">
+      <div class="stage panel" id="stage">
+        <div class="stage-head">
+          <span class="tag">3D CORE</span>
+          <span class="tag tag-ok" id="coreState">READY</span>
+
+          <div class="persona">
+            <button class="active" data-voice="female" title="Female Voice (Synthia)">👩 Synthia · Female</button>
+            <button data-voice="male" title="Male Voice">🤖 Male</button>
+            <button id="btnMicMode" title="মাইক্রোফোন অন/অফ করুন">🎙️ <span id="micLabel">Mic: Off</span></button>
+            <button id="btnMuteTop" title="স্পিকার মিউট/আনমিউট">🔊</button>
+          </div>
+
+          <span class="squad-count">● <span id="squadReady">5 Ready</span></span>
+          <button class="icon-btn sm" id="btnResetLayout" title="লেআউট সাইজ রিসেট করুন">⊞</button>
+        </div>
+
+        <svg class="links" id="links"></svg>
+        <canvas id="core"></canvas>
+
+        <!-- বাম পাশের ৪টি কার্ড (আগের চেয়ে একটু বড় ও সুন্দর + টেনে রিসাইজযোগ্য) -->
+        <div class="cards cards-left" id="cardsLeft">
+          <div class="card accent-pink" id="cardL_0" data-open="memory">
+            <div class="ico">🧠</div>
+            <div class="c-txt"><b>Memory &amp; Brain</b><small>Facts · Notes</small></div>
+            <span class="count" id="cMem">0</span>
+          </div>
+          <div class="card-split" data-card-split="0" title="টেনে বড়-ছোট করুন"></div>
+          <div class="card accent-teal" id="cardL_1" data-open="skills">
+            <div class="ico">🛠️</div>
+            <div class="c-txt"><b>Skills</b><small id="cSkillsSub">5 categories</small></div>
+            <span class="count" id="cSkills">24</span>
+          </div>
+          <div class="card-split" data-card-split="1" title="টেনে বড়-ছোট করুন"></div>
+          <div class="card accent-red card-hot" id="cardL_2" data-open="models">
+            <div class="ico">⚡</div>
+            <div class="c-txt"><b>Models &amp; Keys</b><small>Local · Cloud · Fallback</small></div>
+            <span class="count" id="cModels">1/8</span>
+          </div>
+          <div class="card-split" data-card-split="2" title="টেনে বড়-ছোট করুন"></div>
+          <div class="card accent-teal" id="cardL_3" data-open="settings">
+            <div class="ico">⚙️</div>
+            <div class="c-txt"><b>Settings</b><small>Safety · Strict Delete</small></div>
+            <span class="count">🔒</span>
+          </div>
+          <div class="stage-resizer resizer-left" data-split="stageLeft" title="বাম বক্সগুলো চওড়া/সরু করুন"></div>
+        </div>
+
+        <!-- ডান পাশের ৭টি কার্ড (File, System, Browser, Research, Voice, Studio, Remote — Smriti বাদ) -->
+        <div class="cards cards-right" id="cardsRight">
+          <div class="stage-resizer resizer-right" data-split="stageRight" title="ডান বক্সগুলো চওড়া/সরু করুন"></div>
+          <div class="squad-list" id="squad"></div>
+        </div>
+
+        <div class="core-status">
+          <div class="pill" id="corePill" title="মাইক্রোফোন অন/অফ করতে ক্লিক করুন">
+            <span class="dot dot-ok" id="coreDot"></span>
+            <span id="coreText">Synthia is ready</span>
+          </div>
+          <small id="coreSubHint">মাঝখানের গ্লোয়িং অরব বা নিচের 🎙️ বাটনে ক্লিক করে কথা বলুন · অথবা টাইপ করুন</small>
+        </div>
+      </div>
+
+      <div class="splitter splitter-h" data-split="centerMid" title="ওপরে-নিচে টেনে বড়-ছোট করুন (ডাবল-ক্লিক = রিসেট)"></div>
+
+      <div class="panel ledger" id="secLedger">
+        <div class="tabs" data-tabs="ledger">
+          <button class="active" data-tab="ledgerView">Ledger</button>
+          <button data-tab="timelineView">Timeline</button>
+          <span class="spacer"></span>
+          <span class="muted mono" id="taskId">ready</span>
+        </div>
+        <div class="tab-body active" id="ledgerView">
+          <div class="empty" id="ledgerEmpty">কোনো কাজ চলছে না। কমান্ড দিলে প্রতিটি ধাপ এখানে লাইভ দেখা যাবে।</div>
+          <ol class="steps" id="steps"></ol>
+        </div>
+        <div class="tab-body" id="timelineView"><ul class="timeline" id="timeline"></ul></div>
+      </div>
+    </section>
+
+    <div class="splitter splitter-v" data-split="colRight" title="ডান প্যানেল টেনে বড়-ছোট করুন (ডাবল-ক্লিক = রিসেট)"></div>
+
+    <!-- ========== RIGHT COLUMN ========== -->
+    <aside class="col col-right panel" id="colRight">
+      <div class="tabs" data-tabs="right">
+        <button class="active" data-tab="chatView">Chat</button>
+        <button data-tab="traceView">Trace</button>
+        <button data-tab="memTabView">Memory</button>
+        <span class="spacer"></span>
+        <button class="icon-btn sm" id="btnReset" title="নতুন কথোপকথন">🗑️ New</button>
+      </div>
+
+      <div class="tab-body active chat" id="chatView">
+        <div class="msg bot welcome-msg">
+          <div class="who">💠 Synthia</div>
+          <div class="bubble">
+            হ্যালো Boss! আমি <b>Synthia</b> 💠<br>
+            বাংলা বা ইংরেজিতে যা বলবেন, করে দেবো — ফাইল খোঁজা, অ্যাপ খোলা, ইউটিউব প্লে, ওয়েব রিসার্চ, কোড/নোট লেখা আর আরও অনেক কিছু।<br><br>
+            • ডিলিট বা ঝুঁকিপূর্ণ কাজের আগে সবসময় আপনার অনুমতি নেবো 🔒<br>
+            • যেকোনো সময় থামাতে: <code>Ctrl+Shift+X</code>
+          </div>
+        </div>
+      </div>
+      <div class="tab-body trace" id="traceView"></div>
+      <div class="tab-body mem-tab" id="memTabView"><ul class="timeline" id="memList"></ul></div>
+
+      <div class="splitter splitter-h" data-split="rightComposer" title="ইনপুট বক্স টেনে বড়-ছোট করুন (ডাবল-ক্লিক = রিসেট)"></div>
+
+      <div class="composer-wrap" id="secComposer">
+        <div class="composer">
+          <textarea id="input" rows="1" placeholder="Ask or command… (বাংলা / English)"></textarea>
+          <button class="icon-btn" id="btnSpeak" title="ভয়েস উত্তর চালু/বন্ধ">🔊</button>
+          <button class="icon-btn" id="btnMic" title="ক্লিক করে কথা বলুন (বাংলা / English)">🎙️</button>
+          <button class="send" id="btnSend" title="Send (Enter)">➤</button>
+        </div>
+        <div class="hint" id="composerHint">Mic: Off · বাংলা বললে বাংলায়, English বললে English-এ উত্তর · Kill: Ctrl+Shift+X</div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<!-- ================= CONFIRM MODAL (STRICT) ================= -->
+<div class="modal-wrap" id="confirmWrap" hidden>
+  <div class="modal danger">
+    <div class="modal-head">🔒 অনুমতি প্রয়োজন <span class="muted" id="cfTimer"></span></div>
+    <div class="modal-title" id="cfTitle"></div>
+    <div class="modal-tool mono" id="cfTool"></div>
+    <pre class="modal-details" id="cfDetails"></pre>
+    <label class="check"><input type="checkbox" id="cfCheck" /> আমি বুঝেছি এবং নিশ্চিতভাবে অনুমতি দিচ্ছি</label>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cfDeny">✖ না, বাতিল করো</button>
+      <button class="btn btn-danger" id="cfApprove" disabled>✔ হ্যাঁ, অনুমতি দিলাম</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= MODELS MODAL ================= -->
+<div class="modal-wrap" id="modelsWrap" hidden>
+  <div class="modal wide">
+    <div class="modal-head">⚡ Models &amp; Keys <button class="icon-btn close" data-close="modelsWrap">✕</button></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+      <span>Brain Routing Mode:</span>
+      <div class="seg" id="modeSeg">
+        <button data-mode="auto" class="active">Auto Fallback (Recommended)</button>
+        <button data-mode="manual">Manual Lock</button>
+      </div>
+    </div>
+    <p class="muted" style="margin:0 0 10px;line-height:1.5;">
+      <b>Auto</b>: নেট থাকলে priority অনুযায়ী ক্লাউড API → লিমিট শেষ হলে পরেরটা → নেট না থাকলে লোকাল Gemma 4।<br>
+      <b>Manual</b>: নিচ থেকে যে মডেলে ক্লিক করবেন শুধু সেটাই চলবে। API key বসাতে <code>.env</code> ফাইল ব্যবহার করুন।
+    </p>
+    <div class="model-list" id="modelList"></div>
+  </div>
+</div>
+
+<!-- ================= INFO MODAL ================= -->
+<div class="modal-wrap" id="infoWrap" hidden>
+  <div class="modal wide">
+    <div class="modal-head"><span id="infoTitle"></span> <button class="icon-btn close" data-close="infoWrap">✕</button></div>
+    <div id="infoBody"></div>
+  </div>
+</div>
+
+<script src="/ui/core.js"></script>
+<script src="/ui/app.js"></script>
+</body>
+</html>

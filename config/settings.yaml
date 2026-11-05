@@ -1,0 +1,32 @@
+# ==========================================================
+#  Synthia - মূল সেটিংস
+# ==========================================================
+assistant:
+  name: Synthia
+  # Synthia কোন ভাষায় উত্তর দেবে: auto = আপনি যে ভাষায় বলবেন সেই ভাষায়
+  language: auto
+
+server:
+  host: 127.0.0.1
+  port: 8765
+
+brain:
+  # auto   = নেট থাকলে ক্লাউড API (priority অনুযায়ী), লিমিট শেষ হলে পরেরটা, নেট না থাকলে লোকাল
+  # manual = UI থেকে যে মডেল বেছে দেবেন শুধু সেটাই চলবে
+  mode: auto
+  # manual মোডের ডিফল্ট মডেল (models.yaml-এর id)
+  manual_model: local-gemma4
+  max_steps: 12          # এক কমান্ডে সর্বোচ্চ কত ধাপ টুল চালাবে
+  temperature: 0.3
+
+safety:
+  # অনুমতির জন্য কত সেকেন্ড অপেক্ষা করবে; সময় পার হলে কাজটি বাতিল (deny)
+  confirm_timeout_sec: 180
+  # ডিলিট সবসময় Recycle Bin-এ যাবে (স্থায়ী ডিলিট নিষিদ্ধ)
+  delete_to_recycle_bin: true
+
+paths:
+  # Synthia-র আউটপুট (ভিডিও, ছবি, রিপোর্ট) এখানে জমা হবে
+  workspace: ./workspace
+  # Synthia-র জন্য আলাদা Chrome প্রোফাইল (ধাপ ৩-এ ব্যবহার হবে)
+  chrome_profile: ./synthia_data/chrome_profile
