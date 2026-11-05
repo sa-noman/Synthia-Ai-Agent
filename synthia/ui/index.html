@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SYNTHIA · Command Bridge</title>
 <link rel="icon" href="/favicon.ico" />
-<link rel="stylesheet" href="/ui/style.css" />
+<link rel="stylesheet" href="/ui/style.css?v=7" />
 </head>
 <body>
 <div id="app">
@@ -17,12 +17,19 @@
       <span class="brand-sub">COMMAND BRIDGE · <span id="ver">v0.1.0</span></span>
     </div>
 
-    <button class="chip chip-accent" id="btnModels">⚡ Models &amp; Keys</button>
+    <div class="drop-wrap" id="providerDropWrap">
+      <button class="chip chip-accent" id="btnProviderDrop" title="API / Provider পরিবর্তন করুন">
+        <span class="dot dot-ok" id="providerDot"></span>
+        <span id="activeProvider">Google AI Studio</span>
+        <span class="caret">▾</span>
+      </button>
+      <div class="drop-menu" id="providerDropMenu" hidden></div>
+    </div>
 
     <div class="drop-wrap" id="modelDropWrap">
-      <button class="chip" id="btnModelDrop" title="Click to switch active model">
+      <button class="chip" id="btnModelDrop" title="এই Provider-এর মডেল পরিবর্তন করুন">
         <span class="dot dot-ok" id="brainDot"></span>
-        <span id="activeModel">Gemma 4 E4B (Local)</span>
+        <span id="activeModel">Gemini 3.5 Flash</span>
         <span class="caret">▾</span>
       </button>
       <div class="drop-menu" id="modelDropMenu" hidden></div>
@@ -85,7 +92,7 @@
           <button data-cmd="আজকের USD to BDT রেট কত? ওয়েবে সার্চ করে বলো">💱 USD/BDT</button>
           <button data-prompt="অ্যাপ খোলো: ">🚀 Open App</button>
           <button data-cmd="workspace ফোল্ডারটা খোলো">📂 Workspace</button>
-          <button data-cmd="তুমি কী কী মনে রেখেছো সব দেখাও">🧠 Memory</button>
+          <button data-open="memory">🧠 Memory</button>
           <button class="soon" title="পরবর্তী ধাপে আসছে">🎬 Studio</button>
           <button class="soon" title="পরবর্তী ধাপে আসছে">📡 Remote</button>
         </div>
@@ -98,18 +105,33 @@
     <section class="col col-center" id="colCenter">
       <div class="stage panel" id="stage">
         <div class="stage-head">
-          <span class="tag">3D CORE</span>
-          <span class="tag tag-ok" id="coreState">READY</span>
-
-          <div class="persona">
-            <button class="active" data-voice="female" title="Female Voice (Synthia)">👩 Synthia · Female</button>
-            <button data-voice="male" title="Male Voice">🤖 Male</button>
-            <button id="btnMicMode" title="মাইক্রোফোন অন/অফ করুন">🎙️ <span id="micLabel">Mic: Off</span></button>
-            <button id="btnMuteTop" title="স্পিকার মিউট/আনমিউট">🔊</button>
+          <div class="stage-tags">
+            <span class="st-label">3D CORE</span>
+            <span class="st-state ok" id="coreState">READY</span>
           </div>
 
-          <span class="squad-count">● <span id="squadReady">5 Ready</span></span>
-          <button class="icon-btn sm" id="btnResetLayout" title="লেআউট সাইজ রিসেট করুন">⊞</button>
+          <div class="persona">
+            <button class="active" data-voice="female" title="Female Voice (Synthia)">
+              <span class="p-dot p-fem"></span><b>Synthia</b><small>Female</small>
+            </button>
+            <button data-voice="male" title="Male Voice (Jarvis)">
+              <span class="p-dot p-male"></span><b>Jarvis</b><small>Male</small>
+            </button>
+            <button id="btnMicMode" title="মাইক্রোফোন অন/অফ করুন">
+              <span class="mic-dot" id="micDot"></span><span id="micLabel">Mic: Off</span>
+            </button>
+            <button id="btnMuteTop" title="স্পিকার মিউট/আনমিউট">🔊 Mute</button>
+          </div>
+
+          <div class="stage-mini-tools">
+            <button class="mini-ico" id="btnResetLayout" title="লেআউট সাইজ রিসেট করুন">⊞</button>
+            <button class="mini-ico" id="btnStageSkills" title="Skills">⌘</button>
+          </div>
+
+          <div class="squad-hdr">
+            <span class="sq-title">HELPER SQUAD</span>
+            <span class="squad-ready" id="squadReady">● 5 Ready</span>
+          </div>
         </div>
 
         <svg class="links" id="links"></svg>
@@ -191,10 +213,15 @@
         <div class="msg bot welcome-msg">
           <div class="who">💠 Synthia</div>
           <div class="bubble">
-            হ্যালো Boss! আমি <b>Synthia</b> 💠<br>
-            বাংলা বা ইংরেজিতে যা বলবেন, করে দেবো — ফাইল খোঁজা, অ্যাপ খোলা, ইউটিউব প্লে, ওয়েব রিসার্চ, কোড/নোট লেখা আর আরও অনেক কিছু।<br><br>
-            • ডিলিট বা ঝুঁকিপূর্ণ কাজের আগে সবসময় আপনার অনুমতি নেবো 🔒<br>
-            • যেকোনো সময় থামাতে: <code>Ctrl+Shift+X</code>
+            <div class="bubble-content">
+              হ্যালো Boss! আমি <b>Synthia</b> 💠<br>
+              বাংলা বা ইংরেজিতে যা বলবেন, করে দেবো — ফাইল খোঁজা, অ্যাপ খোলা, ইউটিউব প্লে, ওয়েব রিসার্চ, কোড/নোট লেখা আর আরও অনেক কিছু।<br><br>
+              • ডিলিট বা ঝুঁকিপূর্ণ কাজের আগে সবসময় আপনার অনুমতি নেবো 🔒<br>
+              • যেকোনো সময় থামাতে: <code>Ctrl+Shift+X</code>
+            </div>
+            <div class="msg-meta">
+              <span class="msg-model">⚡ system</span>
+            </div>
           </div>
         </div>
       </div>
@@ -235,17 +262,50 @@
 <div class="modal-wrap" id="modelsWrap" hidden>
   <div class="modal wide">
     <div class="modal-head">⚡ Models &amp; Keys <button class="icon-btn close" data-close="modelsWrap">✕</button></div>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-      <span>Brain Routing Mode:</span>
-      <div class="seg" id="modeSeg">
-        <button data-mode="auto" class="active">Auto Fallback (Recommended)</button>
-        <button data-mode="manual">Manual Lock</button>
+    <div class="models-toolbar">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <span>Brain Routing Mode:</span>
+        <div class="seg" id="modeSeg">
+          <button data-mode="auto" class="active">Auto Fallback (Recommended)</button>
+          <button data-mode="manual">Manual Lock</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn-sm" id="btnResetCooldowns" title="সব মডেলের রেট-লিমিট কুলডাউন রিসেট করুন">🔄 Reset Limits</button>
+        <button class="btn-sm btn-accent" id="btnToggleAddModel">➕ Add Custom API / Model</button>
       </div>
     </div>
-    <p class="muted" style="margin:0 0 10px;line-height:1.5;">
-      <b>Auto</b>: নেট থাকলে priority অনুযায়ী ক্লাউড API → লিমিট শেষ হলে পরেরটা → নেট না থাকলে লোকাল Gemma 4।<br>
-      <b>Manual</b>: নিচ থেকে যে মডেলে ক্লিক করবেন শুধু সেটাই চলবে। API key বসাতে <code>.env</code> ফাইল ব্যবহার করুন।
-    </p>
+    <div class="models-info-bar">
+      <label class="check" style="margin:0;font-size:1.15rem;">
+        <input type="checkbox" id="chkFallbackOnLimit" checked />
+        <span>⚡ <b>Smart Auto-Switch:</b> কোনো মডেলের লিমিট/কোটা শেষ হলে বা এরর দিলে অটোমেটিক পরের সচল মডেলে সুইচ করবে</span>
+      </label>
+      <div class="muted" style="margin-top:0.45rem;line-height:1.5;">
+        নিচের যেকোনো মডেলে <b>🔑 + Add API Key</b> বাটনে ক্লিক করে API Key পেস্ট করুন এবং <b>Save &amp; Use</b> চাপুন — সাথে সাথে সেই মডেলটি চালু হয়ে যাবে।
+      </div>
+    </div>
+
+    <div id="customModelBox" class="custom-model-box" hidden>
+      <div class="cm-title">➕ নতুন API বা লোকাল মডেল যুক্ত করুন</div>
+      <div class="cm-grid">
+        <input id="cmLabel" type="text" placeholder="মডেলের নাম (যেমন: DeepSeek V3 / OpenAI GPT-4o)" />
+        <select id="cmProvider">
+          <option value="openai_compat">☁️ Cloud (OpenAI-Compatible API)</option>
+          <option value="ollama">💻 Local (Ollama)</option>
+        </select>
+        <input id="cmBaseUrl" type="text" placeholder="Base URL (যেমন: https://api.deepseek.com/v1)" value="https://openrouter.ai/api/v1" />
+        <input id="cmModel" type="text" placeholder="Model ID (যেমন: deepseek-chat বা gpt-4o-mini)" />
+        <input id="cmEnvKey" type="text" placeholder="Env Key নাম (যেমন: DEEPSEEK_API_KEY)" />
+        <input id="cmApiKey" type="password" placeholder="API Key পেস্ট করুন (ঐচ্ছিক, পরেও দেওয়া যাবে)" />
+        <input id="cmPriority" type="number" placeholder="Priority (1-99)" value="35" min="1" max="200" />
+        <label class="check" style="margin:0;"><input type="checkbox" id="cmVision" /> 👁 Vision সাপোর্ট আছে</label>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+        <button class="btn-sm" id="btnCancelAddModel">বাতিল</button>
+        <button class="btn-sm btn-accent" id="btnSaveCustomModel">💾 সেভ ও যুক্ত করুন</button>
+      </div>
+    </div>
+
     <div class="model-list" id="modelList"></div>
   </div>
 </div>
@@ -258,7 +318,7 @@
   </div>
 </div>
 
-<script src="/ui/core.js"></script>
-<script src="/ui/app.js"></script>
+<script src="/ui/core.js?v=7"></script>
+<script src="/ui/app.js?v=7"></script>
 </body>
 </html>

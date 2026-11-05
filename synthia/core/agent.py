@@ -122,6 +122,8 @@ class Agent:
         max_steps = int(settings.get("brain.max_steps", 12))
         tools = registry.schemas()
         final = ""
+        used_model = ""
+        used_model_label = ""
         for step in range(1, max_steps + 1):
             if self._cancel.is_set():
                 final = "⛔ কাজ বন্ধ করা হয়েছে (Kill switch)।"
@@ -130,8 +132,13 @@ class Agent:
             messages = [self._system(text, source)] + self._trim(history)
             try:
                 resp = await router.chat(messages, tools, need_vision=bool(images))
+                used_model = resp.get("model") or resp.get("model_id") or ""
+                used_model_label = resp.get("model_label") or ""
             except LLMError as e:
                 final = f"⚠️ Brain error: {e}"
+                active_cfg = next((m for m in settings.models if m.get("id") == router.active), {})
+                used_model = active_cfg.get("model", router.active or "")
+                used_model_label = active_cfg.get("label", "")
                 break
 
             calls = resp.get("tool_calls") or []
@@ -141,18 +148,28 @@ class Agent:
                 history.append({"role": "assistant", "content": final})
                 break
 
-            history.append({
+            assistant_msg: dict[str, Any] = {
                 "role": "assistant",
                 "content": content,
-                "tool_calls": [
-                    {"id": c["id"], "type": "function",
-                     "function": {"name": c["name"],
-                                  "arguments": json.dumps(c["arguments"], ensure_ascii=False)}}
+            }
+            if resp.get("extra_content"):
+                assistant_msg["extra_content"] = resp["extra_content"]
+            if calls:
+                assistant_msg["tool_calls"] = [
+                    c.get("raw") or {
+                        "id": c["id"],
+                        "type": "function",
+                        "function": {
+                            "name": c["name"],
+                            "arguments": json.dumps(c["arguments"], ensure_ascii=False) if isinstance(c["arguments"], dict) else str(c["arguments"]),
+                        },
+                    }
                     for c in calls
-                ],
-            })
+                ]
+            history.append(assistant_msg)
             if content:
-                await bus.emit("chat", role="assistant", text=content, partial=True, session=session)
+                await bus.emit("chat", role="assistant", text=content, partial=True, session=session,
+                               model=used_model, model_label=used_model_label)
 
             for c in calls:
                 if self._cancel.is_set():
@@ -177,7 +194,8 @@ class Agent:
         # images বড় — হিস্টোরি থেকে সরিয়ে ফেলি
         for m in history:
             m.pop("images", None)
-        await bus.emit("chat", role="assistant", text=final, source=source, session=session)
+        await bus.emit("chat", role="assistant", text=final, source=source, session=session,
+                       model=used_model, model_label=used_model_label)
         await bus.emit("task_end", task_id=task_id)
         learning.log_message(session, "assistant", final)
         learning.after_turn(session, text, history, n_tools, n_ok)

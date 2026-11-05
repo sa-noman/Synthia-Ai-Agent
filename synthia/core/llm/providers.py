@@ -103,15 +103,19 @@ class OpenAICompatProvider(BaseProvider):
         out = []
         for m in messages:
             mm: dict[str, Any] = {"role": m["role"]}
-            content = m.get("content") or ""
+            content = m.get("content")
+            if content is None:
+                content = ""
             if m.get("images") and m["role"] == "user":
-                parts: list[dict[str, Any]] = [{"type": "text", "text": content}]
+                parts: list[dict[str, Any]] = [{"type": "text", "text": str(content)}]
                 for b64 in m["images"]:
                     parts.append({"type": "image_url",
                                   "image_url": {"url": f"data:image/png;base64,{b64}"}})
                 mm["content"] = parts
             else:
                 mm["content"] = content
+            if m.get("extra_content"):
+                mm["extra_content"] = m["extra_content"]
             if m.get("tool_calls"):
                 mm["tool_calls"] = m["tool_calls"]
                 if not content:
@@ -132,6 +136,8 @@ class OpenAICompatProvider(BaseProvider):
             body["tools"] = tools
             body["tool_choice"] = "auto"
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        if "generativelanguage.googleapis.com" in self.base_url:
+            headers["x-goog-api-key"] = self.api_key
         if "openrouter.ai" in self.base_url:
             headers["HTTP-Referer"] = "http://localhost/synthia"
             headers["X-Title"] = "Synthia"
@@ -140,10 +146,10 @@ class OpenAICompatProvider(BaseProvider):
                 r = await c.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
         except httpx.HTTPError as e:
             raise LLMError(f"Network error: {e}", network=True) from e
-        if r.status_code == 429 or (r.status_code == 403 and "quota" in r.text.lower()):
+        if r.status_code in (429, 402) or (r.status_code == 403 and any(w in r.text.lower() for w in ("quota", "limit", "rate", "exceeded", "credit"))):
             ra = r.headers.get("retry-after")
             raise LLMError(f"Rate limit / quota শেষ ({r.status_code})", rate_limited=True,
-                           retry_after=float(ra) if ra and ra.replace('.', '', 1).isdigit() else None)
+                           retry_after=float(ra) if ra and ra.replace('.', '', 1).isdigit() else 90.0)
         if r.status_code >= 500:
             raise LLMError(f"Server error {r.status_code}", network=True)
         if r.status_code != 200:
@@ -151,16 +157,21 @@ class OpenAICompatProvider(BaseProvider):
         data = r.json()
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
+        raw_tool_calls = msg.get("tool_calls") or []
         calls = [
             {"id": tc.get("id") or "call_" + uuid.uuid4().hex[:8],
              "name": tc["function"]["name"],
-             "arguments": _parse_args(tc["function"].get("arguments"))}
-            for tc in (msg.get("tool_calls") or [])
+             "arguments": _parse_args(tc["function"].get("arguments")),
+             "raw": tc}
+            for tc in raw_tool_calls
         ]
         content = msg.get("content") or ""
         if isinstance(content, list):
             content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
-        return {"content": content, "tool_calls": calls}
+        res = {"content": content, "tool_calls": calls}
+        if msg.get("extra_content"):
+            res["extra_content"] = msg["extra_content"]
+        return res
 
 
 PROVIDERS = {"ollama": OllamaProvider, "openai_compat": OpenAICompatProvider}

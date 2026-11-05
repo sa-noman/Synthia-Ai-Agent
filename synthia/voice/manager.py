@@ -52,7 +52,7 @@ class VoiceManager:
     async def _on_bus_event(self, ev: dict[str, Any]) -> None:
         t = ev.get("type")
         if t == "chat" and ev.get("role") == "assistant" and not ev.get("partial"):
-            if not self.muted and ev.get("text"):
+            if ev.get("source") == "voice" and not self.muted and ev.get("text"):
                 await self.speak(ev["text"])
         elif t == "signal" and ev.get("title") == "kill_switch":
             await self.stop_all()
@@ -72,6 +72,8 @@ class VoiceManager:
     # ---------- কথা বলা (TTS) ----------
     async def speak(self, text: str) -> None:
         await self.stop_speaking()
+        if self.listening:
+            await self.stop_listening(commit=False)
         if self.muted:
             return
         self.speaking = True

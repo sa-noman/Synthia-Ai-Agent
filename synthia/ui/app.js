@@ -47,8 +47,9 @@
       const el = document.createElement("div");
       el.className = `agent ag-${a.c} ${ok ? "ready" : "soon-agent"}`;
       el.id = "ag-" + a.id;
-      el.title = `${a.name} — ${a.role}`;
+      el.title = `${a.name} — ${a.role} (ক্লিক করে স্কিল দেখুন)`;
       el.innerHTML = `<span class="ico">${a.ico}</span><div class="c-txt"><b>${a.name}<em>${a.role}</em></b><span class="st">${ok ? "Ready" : "Soon"}</span></div><span class="num">${counts[a.id] || 0}</span>`;
+      el.addEventListener("click", () => openInfo("skills", a.id));
       box.appendChild(el);
     });
     setText("#squadReady", `● ${ready} Ready`);
@@ -262,6 +263,10 @@
   }
   const send = (obj) => ws && ws.readyState === 1 && ws.send(JSON.stringify(obj));
 
+  let currentInfoModal = "", currentSkillFilter = "all";
+  const modelTests = {};
+  const openDrawers = {};
+
   function handle(ev) {
     switch (ev.type) {
       case "state": applyState(ev); break;
@@ -271,13 +276,29 @@
       case "status": status(ev); break;
       case "task_start": taskStart(ev); break;
       case "tool_start": toolStart(ev); break;
-      case "tool_end": toolEnd(ev); break;
-      case "task_end": setText("#taskId", "done · " + ev.task_id); stats.tasks++; renderAnalytics(); break;
+      case "tool_end":
+        toolEnd(ev);
+        if (["memory", "remember", "skill_manage"].includes(ev.tool)) send({ type: "state" });
+        break;
+      case "task_end":
+        setText("#taskId", "done · " + ev.task_id);
+        stats.tasks++;
+        renderAnalytics();
+        setTimeout(() => send({ type: "state" }), 1200);
+        break;
       case "signal": signal(ev.level || "info", ev.title || "signal", ev.text || ""); break;
       case "model_active":
         if (brain) { brain.active = ev.id; renderModels(); updateModelChips(); }
         else setText("#activeModel", ev.label);
         signal("info", "model", "Brain: " + ev.label); break;
+      case "model_test_result":
+        modelTests[ev.model_id] = ev;
+        renderModels();
+        signal(ev.ok ? "ok" : "error", "model_test", ev.ok ? `✔ ${ev.model_id} সচল (${ev.ms}ms)` : `✖ ${ev.model_id}: ${ev.error}`);
+        break;
+      case "session_search_result":
+        renderSessionSearchResult(ev.query, ev.result);
+        break;
       case "confirm_request": openConfirm(ev); break;
       case "confirm_resolved": closeConfirm(ev); break;
       case "voice_state": applyVoice(ev); break;
@@ -290,92 +311,454 @@
   function applyState(s) {
     setText("#ver", "v" + s.version);
     setText("#cSkills", s.tool_count);
-    setText("#cSkillsSub", Object.keys(s.skills || {}).length + " categories");
+    const lCount = (s.learned_skills || []).length;
+    setText("#cSkillsSub", Object.keys(s.skills || {}).length + " categories" + (lCount ? ` · ${lCount} learned` : ""));
     setText("#cMem", s.memory_count);
     window.__skills = s.skills || {};
+    window.__toolsDetail = s.tools_detail || [];
+    window.__learnedSkills = s.learned_skills || [];
+    window.__memories = s.memories || [];
+    window.__learningMem = s.learning_memory || { user: [], memory: [], stats: {} };
     window.__startup = !!s.startup_enabled;
     renderSquad(s.skills);
     if (s.brain) applyBrain(s.brain);
     renderMemories(s.memories, s.memory_count);
     if (s.voice) applyVoice(s.voice);
     (s.pending_confirms || []).forEach(openConfirm);
+    if ($("#infoWrap") && !$("#infoWrap").hidden) {
+      if (currentInfoModal === "memory") renderMemoryModal();
+      else if (currentInfoModal === "skills") renderSkillsModal(currentSkillFilter);
+    }
   }
 
   /* ================= মডেল / ব্রেন ================= */
-  const providerOf = (m) => m.provider || (m.local ? "ollama" : String(m.label || "cloud").split(/[\s·(]/)[0].toLowerCase());
+  const KEY_LINKS = {
+    GEMINI_API_KEY: "https://aistudio.google.com/app/apikey",
+    GROQ_API_KEY: "https://console.groq.com/keys",
+    CEREBRAS_API_KEY: "https://cloud.cerebras.ai/",
+    OPENROUTER_API_KEY: "https://openrouter.ai/keys",
+    MISTRAL_API_KEY: "https://console.mistral.ai/api-keys/",
+    GITHUB_TOKEN: "https://github.com/settings/tokens",
+    NVIDIA_API_KEY: "https://build.nvidia.com/",
+  };
+  const providerOf = (m) => m.provider_name || m.provider || (m.local ? "Ollama (Local)" : String(m.label || "Cloud").split(/[\s·(]/)[0]);
+  let selectedProvider = "Google AI Studio";
+  const PROVIDER_ICONS = {
+    "Google AI Studio": "⚡",
+    "OpenRouter": "🌐",
+    "Ollama (Local)": "💻",
+    "Groq": "⚡",
+    "Cerebras": "⚡",
+    "Mistral AI": "🌪️",
+    "GitHub Models": "🐙",
+    "NVIDIA NIM": "🟢",
+  };
+
   function updateModelChips() {
     if (!brain) return;
-    const id = brain.mode === "manual" ? brain.manual_model : brain.active;
-    const act = brain.models.find((m) => m.id === id) || brain.models.find((m) => m.id === brain.active);
+    const id = brain.mode === "manual" ? brain.manual_model : (brain.preferred_model || brain.active);
+    const act = brain.models.find((m) => m.id === brain.active) || brain.models.find((m) => m.id === id) || brain.models[0];
     if (act) {
-      setText("#activeProviderModel", `${providerOf(act)} · ${act.model}`);
-      setText("#activeModel", (brain.mode === "manual" ? "📌 " : "") + act.model);
+      if (!selectedProvider) selectedProvider = act.provider_name || providerOf(act);
+      setText("#activeProviderModel", `${act.provider_name || providerOf(act)} · ${act.model}`);
+      setText("#activeModel", (brain.mode === "manual" ? "📌 " : "⚡ ") + act.model);
+      const brainDot = $("#brainDot");
+      if (brainDot) brainDot.className = "dot " + (act.available ? "dot-ok" : "dot-warn");
     }
+
+    const provModels = brain.models.filter((m) => (m.provider_name || providerOf(m)) === selectedProvider);
+    const provAvail = provModels.some((m) => m.available);
+    setText("#activeProvider", selectedProvider || "Provider");
+    const provDot = $("#providerDot");
+    if (provDot) provDot.className = "dot " + (provAvail ? "dot-ok" : "dot-warn");
+
     const auto = brain.mode !== "manual";
-    setText("#modeLabel", auto ? "Auto-Run" : "Manual Lock");
+    setText("#modeLabel", auto ? "Auto-Switch" : "Manual Select");
     const b = $("#btnAutoMode");
     if (b) b.classList.toggle("active", auto);
     const md = $("#modeDot");
     if (md) md.className = "dot " + (auto ? "dot-ok" : "dot-warn");
   }
+
   function applyBrain(b) {
     brain = b;
-    $$("#modeSeg button").forEach((x) => x.classList.toggle("active", x.dataset.mode === b.mode));
+    if (b.active_provider) {
+      selectedProvider = b.active_provider;
+    } else {
+      const act = b.models.find((m) => m.id === b.active);
+      if (act) selectedProvider = act.provider_name || providerOf(act);
+    }
+    $$("#modeSeg button, #topModeSeg button").forEach((x) => x.classList.toggle("active", x.dataset.mode === b.mode));
+    const chkFb = $("#chkFallbackOnLimit");
+    if (chkFb) chkFb.checked = b.fallback_on_limit !== false;
     const avail = b.models.filter((m) => m.available).length;
     setText("#cModels", `${avail}/${b.models.length}`);
     updateModelChips();
     renderModels();
   }
+
   function renderModels() {
     if (!brain) return;
     const box = $("#modelList");
     if (!box) return;
     box.innerHTML = "";
+
+    const providerMap = new Map();
     brain.models.forEach((m) => {
-      const selected = brain.mode === "manual" ? m.id === brain.manual_model : m.id === brain.active;
-      const el = document.createElement("div");
-      el.className = `model ${selected ? "selected" : ""} ${m.available ? "" : "off"}`;
-      const badges = [
-        m.local ? '<span class="badge local">LOCAL · Offline</span>' : '<span class="badge">CLOUD</span>',
-        m.available ? '<span class="badge ok">Ready</span>' : '<span class="badge warn">No API key</span>',
-        m.vision ? '<span class="badge">👁 Vision</span>' : "",
-        m.cooldown ? `<span class="badge warn">Limit · ${m.cooldown}s</span>` : "",
-        m.id === brain.active ? '<span class="badge active">ACTIVE</span>' : "",
-      ].join("");
-      el.innerHTML = `<div><b>${m.label}</b><br><small>${m.model} · priority ${m.priority}</small></div><div class="badges">${badges}</div>`;
-      el.addEventListener("click", () => {
-        if (!m.available) { signal("warn", "model", `${m.label}: .env ফাইলে API key দিন`); return; }
-        send({ type: "set_model", mode: "manual", model_id: m.id });
+      const pname = m.provider_name || providerOf(m);
+      if (!providerMap.has(pname)) providerMap.set(pname, []);
+      providerMap.get(pname).push(m);
+    });
+
+    providerMap.forEach((pModels, pname) => {
+      const hdr = document.createElement("div");
+      hdr.className = "provider-group-title";
+      const readyCount = pModels.filter((m) => m.available).length;
+      hdr.innerHTML = `<span>${pname}</span><small>${readyCount}/${pModels.length} Ready</small>`;
+      box.appendChild(hdr);
+
+      pModels.forEach((m) => {
+        const selected = m.id === brain.active || (brain.mode === "manual" && m.id === brain.manual_model) || m.preferred;
+        const el = document.createElement("div");
+        el.className = `model ${selected ? "selected" : ""} ${m.available ? "" : "off"}`;
+        const tst = modelTests[m.id];
+        const badges = [
+          m.local ? '<span class="badge local">LOCAL · Offline</span>' : '<span class="badge">CLOUD</span>',
+          m.vision ? '<span class="badge">👁 Vision</span>' : "",
+          m.available
+            ? `<span class="badge ok">✔ Ready${m.key_masked ? " · " + m.key_masked : ""}</span>`
+            : `<button class="btn-sm btn-key-add" data-act="key">🔑 + Add API Key</button>`,
+          m.cooldown ? `<span class="badge warn">⏳ Cooldown · ${m.cooldown}s</span>` : "",
+          tst ? `<span class="badge ${tst.ok ? "ok" : "warn"}">${tst.ok ? "✔ " + tst.ms + "ms" : "✖ Error"}</span>` : "",
+        ].join("");
+
+        const actionBtns = [
+          !m.local && m.has_key ? `<button class="btn-sm" data-act="key">🔑 Key পরিবর্তন</button>` : "",
+          m.available ? `<button class="btn-sm ${m.id === brain.active ? "btn-accent" : ""}" data-act="select">${m.id === brain.active ? "✔ Active" : "⚡ Use Model"}</button>` : "",
+          m.available ? `<button class="btn-sm" data-act="test">📡 Test</button>` : "",
+          `<button class="btn-sm" data-act="edit" title="মডেল বা Priority এডিট করুন">⚙️</button>`,
+        ].join("");
+
+        const keyUrl = KEY_LINKS[m.api_key_env] || "";
+        const drawerState = openDrawers[m.id] || "";
+
+        el.innerHTML = `
+          <div class="model-top">
+            <div class="model-info">
+              <b>${m.label}</b>
+              <small>${m.model} · priority ${m.priority}${m.api_key_env ? " · " + m.api_key_env : ""}</small>
+            </div>
+            <div class="badges">${badges} ${actionBtns}</div>
+          </div>
+          <div class="model-drawer" data-drawer="key" ${drawerState === "key" ? "" : "hidden"}>
+            <div class="key-input-row">
+              <input type="password" class="inp-key" placeholder="${m.api_key_env || "API_KEY"} এখানে পেস্ট করুন (Ctrl+V)…" />
+              <button class="btn-sm" data-act="toggle-vis" title="দেখুন/লুকান">👁</button>
+              <button class="btn-sm btn-accent" data-act="save-key">💾 Save &amp; Use</button>
+              ${m.has_key ? `<button class="btn-sm btn-danger-sm" data-act="clear-key">🗑️ মুছুন</button>` : ""}
+              ${keyUrl ? `<a class="btn-sm" href="${keyUrl}" target="_blank" style="text-decoration:none;">🔗 Get Free Key ↗</a>` : ""}
+            </div>
+          </div>
+          <div class="model-drawer" data-drawer="edit" ${drawerState === "edit" ? "" : "hidden"}>
+            <div class="key-input-row">
+              <input type="text" class="inp-mname" value="${m.model}" placeholder="Model ID (যেমন: gemini-3.5-flash)" title="Model ID" />
+              <input type="text" class="inp-burl" value="${m.base_url || ""}" placeholder="Base URL" title="Base URL" />
+              <input type="number" class="inp-prio" value="${m.priority}" min="1" max="200" style="max-width:8rem;" title="Priority (ছোট সংখ্যা = আগে চলবে)" />
+              <button class="btn-sm btn-accent" data-act="save-edit">💾 Update</button>
+              <button class="btn-sm btn-danger-sm" data-act="del-model" title="মডেল মুছে ফেলুন">🗑️</button>
+            </div>
+          </div>
+        `;
+
+        const focusKeyInput = () => {
+          requestAnimationFrame(() => {
+            const inp = el.querySelector(`.model-drawer:not([hidden]) .inp-key`);
+            if (inp) inp.focus();
+          });
+        };
+
+        const selectThisModel = () => {
+          if (!m.available) {
+            openDrawers[m.id] = "key";
+            renderModels();
+            focusKeyInput();
+            signal("warn", "api_key", `${m.label} চালাতে নিচের বক্সে API Key পেস্ট করে Save & Use চাপুন`);
+            return;
+          }
+          selectedProvider = m.provider_name || providerOf(m);
+          send({ type: "set_model", mode: brain.mode, model_id: m.id, fallback_on_limit: $("#chkFallbackOnLimit")?.checked ?? true });
+        };
+
+        el.querySelector(".model-top").addEventListener("click", (e) => {
+          if (e.target.closest("button") || e.target.closest("a")) return;
+          selectThisModel();
+        });
+
+        el.querySelector('[data-act="select"]')?.addEventListener("click", selectThisModel);
+        el.querySelectorAll('[data-act="key"]').forEach((btn) => {
+          btn.addEventListener("click", () => {
+            openDrawers[m.id] = openDrawers[m.id] === "key" ? "" : "key";
+            renderModels();
+            if (openDrawers[m.id] === "key") focusKeyInput();
+          });
+        });
+        el.querySelector('[data-act="edit"]')?.addEventListener("click", () => {
+          openDrawers[m.id] = openDrawers[m.id] === "edit" ? "" : "edit";
+          renderModels();
+        });
+        el.querySelector('[data-act="test"]')?.addEventListener("click", (e) => {
+          e.currentTarget.textContent = "⏳ Testing…";
+          send({ type: "test_model", model_id: m.id });
+        });
+        el.querySelector('[data-act="toggle-vis"]')?.addEventListener("click", () => {
+          const inp = el.querySelector(".inp-key");
+          if (inp) inp.type = inp.type === "password" ? "text" : "password";
+        });
+        const saveKey = () => {
+          const val = (el.querySelector(".inp-key")?.value || "").trim();
+          if (!val) { signal("warn", "api_key", "API Key ফাঁকা রাখা যাবে না"); return; }
+          openDrawers[m.id] = "";
+          selectedProvider = m.provider_name || providerOf(m);
+          send({ type: "save_api_key", env_key: m.api_key_env, api_key: val, model_id: m.id });
+        };
+        el.querySelector('[data-act="save-key"]')?.addEventListener("click", saveKey);
+        el.querySelector(".inp-key")?.addEventListener("keydown", (e) => { if (e.key === "Enter") saveKey(); });
+        el.querySelector('[data-act="clear-key"]')?.addEventListener("click", () => {
+          openDrawers[m.id] = "";
+          send({ type: "save_api_key", env_key: m.api_key_env, api_key: "" });
+        });
+        el.querySelector('[data-act="save-edit"]')?.addEventListener("click", () => {
+          const model = el.querySelector(".inp-mname")?.value.trim();
+          const base_url = el.querySelector(".inp-burl")?.value.trim();
+          const priority = parseInt(el.querySelector(".inp-prio")?.value || m.priority, 10);
+          openDrawers[m.id] = "";
+          send({ type: "update_model", model_id: m.id, updates: { model, base_url, priority } });
+        });
+        el.querySelector('[data-act="del-model"]')?.addEventListener("click", () => {
+          openDrawers[m.id] = "";
+          send({ type: "delete_model", model_id: m.id });
+        });
+
+        box.appendChild(el);
       });
-      box.appendChild(el);
     });
   }
+
+  function renderProviderDrop() {
+    const menu = $("#providerDropMenu");
+    if (!menu || !brain) return;
+    menu.innerHTML = "";
+
+    const providerMap = new Map();
+    brain.models.forEach((m) => {
+      const pname = m.provider_name || providerOf(m);
+      if (!providerMap.has(pname)) providerMap.set(pname, []);
+      providerMap.get(pname).push(m);
+    });
+
+    providerMap.forEach((models, pname) => {
+      const isCurrent = pname === selectedProvider;
+      const hasAvail = models.some((m) => m.available);
+      const isLocal = models.some((m) => m.local);
+      const icon = PROVIDER_ICONS[pname] || (isLocal ? "💻" : "🌐");
+
+      const b = document.createElement("button");
+      b.className = (isCurrent ? "sel " : "") + (hasAvail ? "" : "off");
+      const tag = isLocal ? "LOCAL" : (hasAvail ? "✔ Ready" : "🔑 + Key");
+      b.innerHTML = `
+        <span class="dot ${hasAvail ? "dot-ok" : "dot-warn"}"></span>
+        <span>${icon} ${pname}</span>
+        <small>${tag}</small>
+      `;
+
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        menu.hidden = true;
+        selectedProvider = pname;
+        const availModel = models.find((m) => m.available);
+        const targetModel = availModel || models[0];
+
+        if (targetModel && targetModel.available) {
+          send({
+            type: "set_model",
+            mode: brain.mode,
+            model_id: targetModel.id,
+            fallback_on_limit: $("#chkFallbackOnLimit")?.checked ?? true,
+          });
+        }
+        updateModelChips();
+        renderModelDrop();
+        const mm = $("#modelDropMenu");
+        if (mm) mm.hidden = false;
+      });
+
+      menu.appendChild(b);
+    });
+
+    const div = document.createElement("div");
+    div.style.cssText = "border-top:1px dashed var(--line);margin-top:0.4rem;padding-top:0.4rem;";
+
+    const btnAdd = document.createElement("button");
+    btnAdd.className = "btn-drop-action";
+    btnAdd.innerHTML = `<span>➕ Add Custom Provider / Model</span>`;
+    btnAdd.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menu.hidden = true;
+      $("#modelsWrap").hidden = false;
+      const box = $("#customModelBox");
+      if (box) box.hidden = false;
+    });
+    div.appendChild(btnAdd);
+
+    const btnManage = document.createElement("button");
+    btnManage.className = "btn-drop-action";
+    btnManage.innerHTML = `<span>🔑 Manage All Keys &amp; Models</span>`;
+    btnManage.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menu.hidden = true;
+      $("#modelsWrap").hidden = false;
+      renderModels();
+    });
+    div.appendChild(btnManage);
+
+    menu.appendChild(div);
+  }
+
   function renderModelDrop() {
     const menu = $("#modelDropMenu");
     if (!menu || !brain) return;
     menu.innerHTML = "";
-    brain.models.forEach((m) => {
-      const sel = brain.mode === "manual" ? m.id === brain.manual_model : m.id === brain.active;
+
+    let filtered = brain.models.filter((m) => (m.provider_name || providerOf(m)) === selectedProvider);
+    if (!filtered.length) filtered = brain.models;
+
+    filtered.forEach((m) => {
+      const sel = m.id === brain.active;
       const b = document.createElement("button");
       b.className = (sel ? "sel " : "") + (m.available ? "" : "off");
-      b.innerHTML = `<span class="dot ${m.available ? "dot-ok" : ""}"></span><span>${m.model}</span><small>${m.local ? "local" : "cloud"}</small>`;
-      b.addEventListener("click", () => {
+      const rightTag = m.local ? "LOCAL" : (m.available ? "✔ Ready" : "🔑 + Key");
+      b.innerHTML = `
+        <span class="dot ${m.available ? "dot-ok" : "dot-warn"}"></span>
+        <span>${m.label} <em style="font-style:normal;opacity:0.65;font-size:0.92em;">(${m.model})</em></span>
+        <small>${rightTag}</small>
+      `;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
         menu.hidden = true;
-        if (!m.available) { signal("warn", "model", `${m.label}: .env ফাইলে API key দিন`); return; }
-        send({ type: "set_model", mode: "manual", model_id: m.id });
+        if (!m.available) {
+          openDrawers[m.id] = "key";
+          $("#modelsWrap").hidden = false;
+          renderModels();
+          requestAnimationFrame(() => {
+            const inp = $("#modelList")?.querySelector(`.model-drawer:not([hidden]) .inp-key`);
+            if (inp) inp.focus();
+          });
+          signal("warn", "api_key", `${m.label} চালাতে API Key পেস্ট করে Save & Use চাপুন`);
+          return;
+        }
+        send({
+          type: "set_model",
+          mode: brain.mode,
+          model_id: m.id,
+          fallback_on_limit: $("#chkFallbackOnLimit")?.checked ?? true,
+        });
       });
       menu.appendChild(b);
     });
+
+    const div = document.createElement("div");
+    div.style.cssText = "border-top:1px dashed var(--line);margin-top:0.4rem;padding-top:0.4rem;";
+    const btnManage = document.createElement("button");
+    btnManage.className = "btn-drop-action";
+    btnManage.innerHTML = `<span>🔑 Manage Keys &amp; Models</span>`;
+    btnManage.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menu.hidden = true;
+      $("#modelsWrap").hidden = false;
+      renderModels();
+    });
+    div.appendChild(btnManage);
+    menu.appendChild(div);
   }
-  on("#btnModelDrop", "click", (e) => { e.stopPropagation(); renderModelDrop(); const m = $("#modelDropMenu"); m.hidden = !m.hidden; });
-  document.addEventListener("click", () => { const m = $("#modelDropMenu"); if (m) m.hidden = true; });
+
+  on("#btnProviderDrop", "click", (e) => {
+    e.stopPropagation();
+    const mm = $("#modelDropMenu");
+    if (mm) mm.hidden = true;
+    renderProviderDrop();
+    const pm = $("#providerDropMenu");
+    if (pm) pm.hidden = !pm.hidden;
+  });
+
+  on("#btnModelDrop", "click", (e) => {
+    e.stopPropagation();
+    const pm = $("#providerDropMenu");
+    if (pm) pm.hidden = true;
+    renderModelDrop();
+    const mm = $("#modelDropMenu");
+    if (mm) mm.hidden = !mm.hidden;
+  });
+
+  document.addEventListener("click", () => {
+    const pm = $("#providerDropMenu");
+    if (pm) pm.hidden = true;
+    const mm = $("#modelDropMenu");
+    if (mm) mm.hidden = true;
+  });
   on("#btnAutoMode", "click", () => {
     if (!brain) return;
-    if (brain.mode === "manual") send({ type: "set_model", mode: "auto", model_id: brain.manual_model });
+    if (brain.mode === "manual") send({ type: "set_model", mode: "auto", model_id: brain.active });
     else send({ type: "set_model", mode: "manual", model_id: brain.active });
   });
   on("#chipActive", "click", () => ($("#modelsWrap").hidden = false));
-  $$("#modeSeg button").forEach((b) => b.addEventListener("click", () => send({ type: "set_model", mode: b.dataset.mode, model_id: brain && (brain.manual_model || brain.active) })));
+  $$("#modeSeg button, #topModeSeg button").forEach((b) => b.addEventListener("click", () => send({
+    type: "set_model",
+    mode: b.dataset.mode,
+    model_id: brain && (brain.active || brain.manual_model),
+    fallback_on_limit: $("#chkFallbackOnLimit")?.checked ?? true,
+  })));
+  on("#chkFallbackOnLimit", "change", (e) => {
+    if (!brain) return;
+    send({ type: "set_model", mode: brain.mode, model_id: brain.active, fallback_on_limit: e.target.checked });
+  });
+  on("#btnResetCooldowns", "click", () => send({ type: "reset_cooldowns" }));
+  on("#btnToggleAddModel", "click", () => {
+    const box = $("#customModelBox");
+    if (box) box.hidden = !box.hidden;
+  });
+  on("#btnCancelAddModel", "click", () => {
+    const box = $("#customModelBox");
+    if (box) box.hidden = true;
+  });
+  on("#cmProvider", "change", (e) => {
+    const isLocal = e.target.value === "ollama";
+    const bu = $("#cmBaseUrl");
+    if (bu) bu.value = isLocal ? "http://127.0.0.1:11434" : "https://openrouter.ai/api/v1";
+    const ek = $("#cmEnvKey"), ak = $("#cmApiKey");
+    if (ek) ek.hidden = isLocal;
+    if (ak) ak.hidden = isLocal;
+  });
+  on("#btnSaveCustomModel", "click", () => {
+    const data = {
+      label: $("#cmLabel")?.value.trim(),
+      provider: $("#cmProvider")?.value || "openai_compat",
+      base_url: $("#cmBaseUrl")?.value.trim(),
+      model: $("#cmModel")?.value.trim(),
+      api_key_env: $("#cmEnvKey")?.value.trim(),
+      api_key: $("#cmApiKey")?.value.trim(),
+      priority: parseInt($("#cmPriority")?.value || "35", 10),
+      vision: !!$("#cmVision")?.checked,
+    };
+    if (!data.label || !data.model || !data.base_url) {
+      signal("warn", "model", "অনুগ্রহ করে মডেলের নাম, Model ID এবং Base URL পূরণ করুন");
+      return;
+    }
+    send({ type: "add_custom_model", data });
+    if ($("#cmLabel")) $("#cmLabel").value = "";
+    if ($("#cmModel")) $("#cmModel").value = "";
+    if ($("#cmApiKey")) $("#cmApiKey").value = "";
+    if ($("#customModelBox")) $("#customModelBox").hidden = true;
+  });
   on("#btnModels", "click", () => ($("#modelsWrap").hidden = false));
   $$("[data-close]").forEach((b) => b.addEventListener("click", () => ($("#" + b.dataset.close).hidden = true)));
 
@@ -411,11 +794,35 @@
     s = s.replace(/^\s*[-*] /gm, "• ");
     return s.replace(/\n/g, "<br>");
   }
-  function addMsg(role, text, extra = "") {
+  function addMsg(role, text, extra = "", model = "") {
     const box = $("#chatView");
     const el = document.createElement("div");
     el.className = `msg ${role === "user" ? "user" : "bot"} ${extra}`;
-    el.innerHTML = `<div class="who">${role === "user" ? "You" : "💠 Synthia"}</div><div class="bubble">${md(text)}</div>`;
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    let metaHtml = "";
+    if (role === "assistant" || role === "bot") {
+      let displayModel = model;
+      if (!displayModel && brain) {
+        const act = brain.models?.find((m) => m.id === brain.active) || brain.models?.[0];
+        displayModel = act ? (act.model || act.id) : (brain.active || "");
+      }
+      metaHtml = `
+        <div class="msg-meta">
+          ${displayModel ? `<span class="msg-model" title="Model: ${displayModel}">⚡ ${displayModel}</span>` : ""}
+          <span class="msg-time">${timeStr}</span>
+        </div>
+      `;
+    } else {
+      metaHtml = `
+        <div class="msg-meta">
+          <span class="msg-time">${timeStr}</span>
+        </div>
+      `;
+    }
+
+    el.innerHTML = `<div class="who">${role === "user" ? "You" : "💠 Synthia"}</div><div class="bubble"><div class="bubble-content">${md(text)}</div>${metaHtml}</div>`;
     box.appendChild(el);
     box.scrollTop = box.scrollHeight;
     return el;
@@ -423,7 +830,10 @@
   function showTyping(on_) {
     if (on_ && !typingEl) {
       typingEl = addMsg("assistant", "");
-      typingEl.querySelector(".bubble").innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
+      const bc = typingEl.querySelector(".bubble-content");
+      if (bc) bc.innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
+      const mm = typingEl.querySelector(".msg-meta");
+      if (mm) mm.style.display = "none";
     } else if (!on_ && typingEl) { typingEl.remove(); typingEl = null; }
   }
   function chat(ev) {
@@ -433,7 +843,7 @@
       return;
     }
     showTyping(false);
-    addMsg("assistant", ev.text, ev.partial ? "partial" : "");
+    addMsg("assistant", ev.text, ev.partial ? "partial" : "", ev.model || ev.model_id);
     if (!ev.partial) timeline("💠 " + ev.text.slice(0, 120));
   }
 
@@ -530,30 +940,12 @@
     const audio = new Audio("data:audio/mpeg;base64," + ev.audio_b64);
     audio.playbackRate = ev.rate || 1.0;
     currentAudio = audio;
-    try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      const pumpRand = () => {
-        if (currentAudio !== audio) return;
-        window.Core && window.Core.setLevel(0.25 + Math.random() * 0.35);
-        speakAnim = requestAnimationFrame(pumpRand);
-      };
-      if (audioCtx.state === "running") {
-        const src = audioCtx.createMediaElementSource(audio);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-        src.connect(analyser); analyser.connect(audioCtx.destination);
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        const pump = () => {
-          if (currentAudio !== audio) return;
-          analyser.getByteFrequencyData(data);
-          let sum = 0;
-          for (let i = 0; i < 32; i++) sum += data[i];
-          window.Core && window.Core.setLevel(Math.min(1, sum / (32 * 165)));
-          speakAnim = requestAnimationFrame(pump);
-        };
-        speakAnim = requestAnimationFrame(pump);
-      } else { audioCtx.resume().catch(() => {}); speakAnim = requestAnimationFrame(pumpRand); }
-    } catch (_) {}
+    const pumpRand = () => {
+      if (currentAudio !== audio) return;
+      if (!audio.paused) window.Core && window.Core.setLevel(0.25 + Math.random() * 0.35);
+      speakAnim = requestAnimationFrame(pumpRand);
+    };
+    speakAnim = requestAnimationFrame(pumpRand);
     const done = () => {
       if (currentAudio !== audio) return;
       currentAudio = null;
@@ -720,17 +1112,41 @@
     const ul = $("#memList");
     if (!ul) return;
     ul.innerHTML = "";
-    const arr = Array.isArray(list) ? list : [];
-    if (!arr.length) {
+    const lm = window.__learningMem || { user: [], memory: [] };
+    const userEntries = Array.isArray(lm.user) ? lm.user : [];
+    const envEntries = Array.isArray(lm.memory) ? lm.memory : [];
+    const notes = Array.isArray(list) ? list : [];
+
+    const topBtn = document.createElement("li");
+    topBtn.style.borderBottom = "none";
+    topBtn.innerHTML = `<button class="btn-sm btn-accent" style="width:100%;" id="btnOpenMemModal">🧠 সব মেমরি দেখুন / নতুন যোগ করুন (${count || 0})</button>`;
+    topBtn.querySelector("#btnOpenMemModal")?.addEventListener("click", () => openInfo("memory"));
+    ul.appendChild(topBtn);
+
+    if (!userEntries.length && !envEntries.length && !notes.length) {
       const li = document.createElement("li");
-      li.textContent = count ? `${count}টি মেমরি আছে — "তুমি কী কী মনে রেখেছো" বললে সব দেখাবে।` : 'এখনো কোনো মেমরি নেই — "মনে রাখো …" বলে শুরু করুন।';
+      li.textContent = 'এখনো কোনো মেমরি নেই — ওপরে ক্লিক করে যোগ করুন অথবা চ্যাটে বলুন "মনে রাখো …"।';
       ul.appendChild(li);
       return;
     }
-    arr.forEach((m) => {
+    userEntries.forEach((txt) => {
       const li = document.createElement("li");
-      let txt = typeof m === "string" ? m : m.text || m.fact || m.content || m.note || (m.key && m.value ? `${m.key}: ${m.value}` : JSON.stringify(m));
-      li.textContent = txt;
+      li.innerHTML = `<span>👤 USER</span>`;
+      li.appendChild(document.createTextNode(txt));
+      ul.appendChild(li);
+    });
+    envEntries.forEach((txt) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span>💻 ENV</span>`;
+      li.appendChild(document.createTextNode(txt));
+      ul.appendChild(li);
+    });
+    notes.forEach((m) => {
+      const li = document.createElement("li");
+      const txt = typeof m === "string" ? m : m.text || m.fact || m.content || m.note || (m.key && m.value ? `${m.key}: ${m.value}` : JSON.stringify(m));
+      const ts = typeof m === "object" && m && m.ts ? m.ts : "📝 NOTE";
+      li.innerHTML = `<span>${ts}</span>`;
+      li.appendChild(document.createTextNode(txt));
       ul.appendChild(li);
     });
   }
@@ -771,15 +1187,334 @@
   on("#cfApprove", "click", () => { if ($("#cfCheck").checked && cfId) send({ type: "confirm", id: cfId, approved: true }); });
   on("#cfDeny", "click", () => cfId && send({ type: "confirm", id: cfId, approved: false }));
 
-  /* ================= ইনফো মডাল (কার্ড / Help) ================= */
-  function openInfo(k) {
+  /* ================= ইনফো মডাল (Memory / Skills / Settings / Help) ================= */
+  const escHtml = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+  function renderMemoryModal() {
+    currentInfoModal = "memory";
+    setText("#infoTitle", "🧠 Memory & Brain — সংরক্ষিত তথ্য ও স্মৃতি");
+    const lm = window.__learningMem || { user: [], memory: [], stats: {} };
+    const userItems = Array.isArray(lm.user) ? lm.user : [];
+    const envItems = Array.isArray(lm.memory) ? lm.memory : [];
+    const notes = Array.isArray(window.__memories) ? window.__memories : [];
+    const totalCount = userItems.length + envItems.length + notes.length;
+
+    const renderList = (items, target) => {
+      if (!items.length) return `<div class="muted" style="padding:0.6rem 0;">কোনো তথ্য সেভ করা নেই।</div>`;
+      return `<ul class="mem-items">${items.map((item, idx) => {
+        const txt = typeof item === "string" ? item : (item.note || item.text || JSON.stringify(item));
+        const ts = typeof item === "object" && item && item.ts ? `<span class="ts">${escHtml(item.ts)}</span>` : "";
+        return `<li class="mem-item">
+          <div class="txt">${ts}${escHtml(txt)}</div>
+          <button class="btn-sm btn-danger-sm" data-mem-del="${escHtml(target)}" data-mem-idx="${idx}" data-mem-txt="${escHtml(txt)}" title="মুছে ফেলুন">🗑️</button>
+        </li>`;
+      }).join("")}</ul>`;
+    };
+
+    const body = $("#infoBody");
+    if (!body) return;
+    body.innerHTML = `
+      <div class="mem-stats">
+        <div class="mem-stat-card"><b>${totalCount}</b><small>মোট সংরক্ষিত স্মৃতি</small></div>
+        <div class="mem-stat-card"><b>${userItems.length}</b><small>👤 USER.md · ${escHtml(lm.user_usage || "0/1375 chars")}</small></div>
+        <div class="mem-stat-card"><b>${envItems.length}</b><small>💻 MEMORY.md · ${escHtml(lm.memory_usage || "0/2200 chars")}</small></div>
+        <div class="mem-stat-card"><b>${notes.length}</b><small>📝 দ্রুত নোটস (Notes)</small></div>
+        <div class="mem-stat-card"><b>${lm.stats?.messages ?? 0}</b><small>💬 আর্কাইভ মেসেজ (FTS5)</small></div>
+      </div>
+
+      <div class="mem-add-bar">
+        <select id="memTargetSel" class="modal-input" style="flex:0 0 21rem;">
+          <option value="user">👤 আমার সম্পর্কে (USER.md)</option>
+          <option value="memory">💻 পিসি / প্রজেক্ট পরিবেশ (MEMORY.md)</option>
+          <option value="notes">📝 দ্রুত নোট (Notes)</option>
+        </select>
+        <input id="memContentInp" type="text" class="modal-input" placeholder="নতুন তথ্য বা নোট লিখুন (যেমন: আমার প্রিয় ভাষা Python)…" />
+        <button id="btnAddMemItem" class="btn-sm btn-accent">➕ সেভ করুন</button>
+      </div>
+
+      <div class="mem-sec">
+        <div class="mem-sec-hdr">
+          <span>👤 আপনার সম্পর্কে তথ্য (USER.md)</span>
+          <small class="muted">${escHtml(lm.user_usage || "")}</small>
+        </div>
+        ${renderList(userItems, "user")}
+      </div>
+
+      <div class="mem-sec">
+        <div class="mem-sec-hdr">
+          <span>💻 পরিবেশ ও সিস্টেম নোট (MEMORY.md)</span>
+          <small class="muted">${escHtml(lm.memory_usage || "")}</small>
+        </div>
+        ${renderList(envItems, "memory")}
+      </div>
+
+      <div class="mem-sec">
+        <div class="mem-sec-hdr">
+          <span>📝 সংরক্ষিত দ্রুত নোটস (Notes)</span>
+          <small class="muted">${notes.length}টি নোট</small>
+        </div>
+        ${renderList(notes, "notes")}
+      </div>
+
+      <div class="mem-sec" style="margin-bottom:0;">
+        <div class="mem-sec-hdr">
+          <span>🔎 পুরনো কথোপকথন অনুসন্ধান (Session Archive)</span>
+          <small class="muted">SQLite FTS5</small>
+        </div>
+        <div class="key-input-row" style="margin-bottom:0.8rem;">
+          <input id="sessSearchInp" type="text" class="modal-input" placeholder="পুরনো চ্যাট থেকে শব্দ খুঁজুন (ফাঁকা রেখে চাপলে সাম্প্রতিক মেসেজ দেখাবে)…" />
+          <button id="btnSessSearch" class="btn-sm btn-accent">🔎 খুঁজুন</button>
+        </div>
+        <div id="sessionSearchRes" class="muted" style="font-family:var(--mono);white-space:pre-wrap;line-height:1.55;"></div>
+      </div>
+    `;
+
+    const doAdd = () => {
+      const target = $("#memTargetSel")?.value || "user";
+      const content = ($("#memContentInp")?.value || "").trim();
+      if (!content) {
+        signal("warn", "memory", "অনুগ্রহ করে সেভ করার জন্য কিছু লিখুন");
+        return;
+      }
+      send({ type: "memory_action", action: "add", target, content });
+      if ($("#memContentInp")) $("#memContentInp").value = "";
+    };
+    on("#btnAddMemItem", "click", doAdd);
+    on("#memContentInp", "keydown", (e) => { if (e.key === "Enter") doAdd(); });
+
+    body.querySelectorAll("[data-mem-del]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = btn.getAttribute("data-mem-del");
+        const idx = parseInt(btn.getAttribute("data-mem-idx") || "-1", 10);
+        const old_text = btn.getAttribute("data-mem-txt") || "";
+        send({ type: "memory_action", action: "remove", target, index: idx, old_text });
+      });
+    });
+
+    const doSearch = () => {
+      const q = ($("#sessSearchInp")?.value || "").trim();
+      const box = $("#sessionSearchRes");
+      if (box) box.textContent = "⏳ খোঁজা হচ্ছে…";
+      send({ type: "session_search", query: q });
+    };
+    on("#btnSessSearch", "click", doSearch);
+    on("#sessSearchInp", "keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
+    $("#infoWrap").hidden = false;
+  }
+
+  function renderSessionSearchResult(query, result) {
+    const box = $("#sessionSearchRes");
+    if (!box) return;
+    box.textContent = result || "কোনো ফলাফল পাওয়া যায়নি।";
+  }
+
+  const CAT_LABELS = {
+    all: "🌐 সব স্কিল",
+    files: "📁 Files",
+    system: "🛡️ System",
+    web: "🧭 Browser",
+    research: "🔎 Research",
+    voice: "🎙️ Voice",
+    media: "🎬 Studio",
+    remote: "📡 Remote",
+    memory: "🧠 Memory",
+    learning: "📚 Learning",
+    learned: "✨ Learned Skills",
+  };
+
+  function renderSkillsModal(filterCat = "all") {
+    currentInfoModal = "skills";
+    currentSkillFilter = filterCat || "all";
+    setText("#infoTitle", "🛠️ Skills & Tools — দক্ষতার তালিকা");
+
+    const toolsDetail = Array.isArray(window.__toolsDetail) ? window.__toolsDetail : [];
+    const learned = Array.isArray(window.__learnedSkills) ? window.__learnedSkills : [];
+
+    // যদি toolsDetail না থাকে তবে window.__skills থেকে বেসিক অবজেক্ট বানিয়ে নিই
+    const allTools = toolsDetail.length
+      ? toolsDetail
+      : Object.entries(window.__skills || {}).flatMap(([cat, names]) =>
+          names.map((n) => ({ name: n, description: "", category: cat, risk: "safe", params: [], required: [] }))
+        );
+
+    const effectiveCat = (t) => TOOL_SQUAD[t.name] || t.category || "other";
+    const catCounts = { all: allTools.length + learned.length };
+    allTools.forEach((t) => {
+      const c = effectiveCat(t);
+      catCounts[c] = (catCounts[c] || 0) + 1;
+      if (t.category && t.category !== c) {
+        catCounts[t.category] = (catCounts[t.category] || 0) + 1;
+      }
+    });
+    catCounts.learned = learned.length;
+
+    const cats = ["all", ...Array.from(new Set(allTools.map(effectiveCat))), "learned"];
+    const filteredTools =
+      currentSkillFilter === "learned"
+        ? []
+        : currentSkillFilter === "all"
+        ? allTools
+        : allTools.filter((t) => effectiveCat(t) === currentSkillFilter || t.category === currentSkillFilter);
+
+    const showLearned = currentSkillFilter === "all" || currentSkillFilter === "learned";
+
+    const body = $("#infoBody");
+    if (!body) return;
+
+    body.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:0.8rem;flex-wrap:wrap;margin-bottom:1rem;">
+        <div class="skill-cats" style="margin-bottom:0;">
+          ${cats.map((c) => `
+            <button class="btn-sm ${currentSkillFilter === c ? "btn-accent" : ""}" data-skill-cat="${escHtml(c)}">
+              ${escHtml(CAT_LABELS[c] || c)} (${catCounts[c] || 0})
+            </button>
+          `).join("")}
+        </div>
+        <button class="btn-sm btn-accent" id="btnToggleCreateSkill">➕ নতুন Skill তৈরি করুন</button>
+      </div>
+
+      <div id="createSkillBox" class="custom-model-box" hidden>
+        <div class="cm-title">✨ নতুন Learned Skill (SKILL.md) তৈরি বা আপডেট করুন</div>
+        <div style="display:grid;gap:0.7rem;">
+          <input id="skNameInp" type="text" class="modal-input" placeholder="Skill-এর নাম (ছোট হাতের অক্ষর ও হাইফেন, যেমন: youtube-summary)" />
+          <input id="skDescInp" type="text" class="modal-input" placeholder="সংক্ষিপ্ত বিবরণ (কখন ও কী কাজে ব্যবহৃত হবে)" />
+          <textarea id="skBodyInp" rows="6" class="modal-input" style="resize:vertical;line-height:1.45;" placeholder="ধাপে ধাপে নির্দেশনা লিখুন (Markdown ফরম্যাটে)…"></textarea>
+          <div style="display:flex;justify-content:flex-end;gap:0.6rem;">
+            <button class="btn-sm" id="btnCancelCreateSkill">বাতিল</button>
+            <button class="btn-sm btn-accent" id="btnSaveSkill">💾 সেভ করুন</button>
+          </div>
+        </div>
+      </div>
+
+      ${showLearned && learned.length ? `
+        <div class="mem-sec">
+          <div class="mem-sec-hdr"><span>✨ এজেন্টের শেখা কাস্টম স্কিলসমূহ (Learned Skills · ${learned.length})</span></div>
+          <div class="skill-grid">
+            ${learned.map((s, idx) => `
+              <div class="skill-card">
+                <div>
+                  <div class="skill-card-head">
+                    <code>✨ ${escHtml(s.name)}</code>
+                    <span class="badge ok">Learned</span>
+                  </div>
+                  <p style="margin-top:0.4rem;">${escHtml(s.description || "কাস্টম লার্নড স্কিল")}</p>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
+                  <span class="skill-params">${(s.files || []).length ? `${s.files.length} extra files` : "SKILL.md"}</span>
+                  <button class="btn-sm" data-view-learned="${idx}">📄 দেখুন / এডিট</button>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      ` : currentSkillFilter === "learned" ? `<div class="muted" style="padding:1rem 0;">এখনো কোনো Learned Skill তৈরি হয়নি। ওপরে "➕ নতুন Skill তৈরি করুন" বাটনে ক্লিক করে যোগ করতে পারেন।</div>` : ""}
+
+      ${filteredTools.length ? `
+        <div class="mem-sec" style="margin-bottom:0;">
+          <div class="mem-sec-hdr">
+            <span>🛠️ বিল্ট-ইন টুলস ও স্কিল (${filteredTools.length})</span>
+            <small class="muted">ক্লিক করে চ্যাটে ব্যবহার করুন</small>
+          </div>
+          <div class="skill-grid">
+            ${filteredTools.map((t) => {
+              const cat = effectiveCat(t);
+              const isHigh = t.risk === "high" || t.risk === "confirm";
+              const paramsTxt = (t.params || []).length
+                ? (t.params || []).map((p) => (t.required || []).includes(p) ? `${p}*` : p).join(", ")
+                : "কোনো প্যারামিটার লাগে না";
+              return `
+                <div class="skill-card">
+                  <div>
+                    <div class="skill-card-head">
+                      <code>${escHtml(t.name)}</code>
+                      <div style="display:flex;gap:0.35rem;align-items:center;">
+                        <span class="badge">${escHtml(cat)}</span>
+                        <span class="badge ${isHigh ? "warn" : "ok"}">${isHigh ? "🔒 অনুমতি" : "⚡ অটো"}</span>
+                      </div>
+                    </div>
+                    <p style="margin-top:0.45rem;">${escHtml(t.description || "Synthia সিস্টেম টুল")}</p>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-top:0.3rem;">
+                    <span class="skill-params" title="Parameters">⚙️ ${escHtml(paramsTxt)}</span>
+                    <button class="btn-sm" data-try-skill="${escHtml(t.name)}">▶ টেস্ট</button>
+                  </div>
+                </div>
+              `;
+            }).join("")}
+          </div>
+        </div>
+      ` : ""}
+    `;
+
+    body.querySelectorAll("[data-skill-cat]").forEach((btn) => {
+      btn.addEventListener("click", () => renderSkillsModal(btn.getAttribute("data-skill-cat")));
+    });
+
+    let editMode = "create";
+    on("#btnToggleCreateSkill", "click", () => {
+      const box = $("#createSkillBox");
+      if (!box) return;
+      editMode = "create";
+      box.hidden = !box.hidden;
+    });
+    on("#btnCancelCreateSkill", "click", () => {
+      const box = $("#createSkillBox");
+      if (box) box.hidden = true;
+    });
+
+    body.querySelectorAll("[data-view-learned]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt(btn.getAttribute("data-view-learned") || "-1", 10);
+        const item = learned[idx];
+        if (!item) return;
+        editMode = "edit";
+        const box = $("#createSkillBox");
+        if (box) box.hidden = false;
+        if ($("#skNameInp")) $("#skNameInp").value = item.name || "";
+        if ($("#skDescInp")) $("#skDescInp").value = item.description || "";
+        const raw = item.content || "";
+        const bodyOnly = raw.startsWith("---") && raw.indexOf("\n---", 3) !== -1
+          ? raw.slice(raw.indexOf("\n---", 3) + 4).trim()
+          : raw;
+        if ($("#skBodyInp")) $("#skBodyInp").value = bodyOnly;
+      });
+    });
+
+    on("#btnSaveSkill", "click", () => {
+      const name = ($("#skNameInp")?.value || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "");
+      const desc = ($("#skDescInp")?.value || "").trim();
+      const instructions = ($("#skBodyInp")?.value || "").trim();
+      if (!name || !desc || !instructions) {
+        signal("warn", "skill", "অনুগ্রহ করে নাম, সংক্ষিপ্ত বিবরণ এবং নির্দেশনা পূরণ করুন");
+        return;
+      }
+      const content = `---\nname: ${name}\ndescription: ${desc}\n---\n\n${instructions}\n`;
+      send({ type: "skill_action", action: editMode, name, content });
+      if ($("#createSkillBox")) $("#createSkillBox").hidden = true;
+    });
+
+    body.querySelectorAll("[data-try-skill]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const tname = btn.getAttribute("data-try-skill");
+        $("#infoWrap").hidden = true;
+        if (input) {
+          input.value = `${tname} টুলটি ব্যবহার করে `;
+          input.focus();
+        }
+      });
+    });
+
+    $("#infoWrap").hidden = false;
+  }
+
+  function openInfo(k, sub) {
     if (k === "models") { $("#modelsWrap").hidden = false; return; }
-    if (k === "memory") { submit("তুমি কী কী মনে রেখেছো সব দেখাও"); return; }
+    if (k === "memory") { renderMemoryModal(); return; }
+    if (k === "skills") { renderSkillsModal(sub || "all"); return; }
+    currentInfoModal = k || "";
     let title = "", body = "";
-    if (k === "skills") {
-      title = "🛠️ Skills";
-      body = Object.entries(window.__skills || {}).map(([cat, tools]) => `<b>${cat}</b><ul>${tools.map((t) => `<li><code>${t}</code></li>`).join("")}</ul>`).join("");
-    } else if (k === "help") {
+    if (k === "help") {
       title = "❓ শর্টকাট ও গাইড";
       body = `<ul>
         <li>🎙️ <b>মাইক:</b> Crystal Core, উপরের <code>Mic</code> বা নিচের 🎙️ — যেকোনোটায় ক্লিক = অন/অফ। অফ থাকলে Synthia কিছুই শোনে না।</li>
@@ -839,7 +1574,8 @@
   on("#btnReset", "click", () => { send({ type: "reset" }); $("#chatView").querySelectorAll(".msg:not(.welcome-msg)").forEach((m) => m.remove()); typingEl = null; });
   $$("#quickActions button").forEach((b) => b.addEventListener("click", () => {
     if (b.classList.contains("soon")) return;
-    if (b.dataset.cmd) submit(b.dataset.cmd);
+    if (b.dataset.open) openInfo(b.dataset.open);
+    else if (b.dataset.cmd) submit(b.dataset.cmd);
     else if (b.dataset.prompt) { input.value = b.dataset.prompt; input.focus(); }
   }));
   $$(".tabs").forEach((tabs) => tabs.querySelectorAll("button[data-tab]").forEach((b) => b.addEventListener("click", () => {

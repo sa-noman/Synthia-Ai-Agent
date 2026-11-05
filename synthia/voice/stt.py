@@ -100,7 +100,7 @@ async def _ollama_gemma_stt(wav_bytes: bytes) -> str:
 async def _gemini_stt(wav_bytes: bytes, api_key: str) -> str:
     b64 = base64.b64encode(wav_bytes).decode("ascii")
     body = {
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.5-flash",
         "temperature": 0.0,
         "messages": [{
             "role": "user",
@@ -110,7 +110,11 @@ async def _gemini_stt(wav_bytes: bytes, api_key: str) -> str:
             ],
         }],
     }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json"
+    }
     async with httpx.AsyncClient(timeout=httpx.Timeout(25, connect=4)) as c:
         r = await c.post("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                          json=body, headers=headers)

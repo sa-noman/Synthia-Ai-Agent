@@ -61,12 +61,23 @@ load_skills()
 
 
 class Hub:
-    """সব খোলা UI কানেকশনে ইভেন্ট পাঠায়।"""
+    """সব খোলা UI কানেকশনে ইভেন্ট পাঠায় (অডিও ইকো এড়াতে audio_play শুধু সক্রিয় উইন্ডোতে যায়)।"""
 
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
+        self.active_ws: WebSocket | None = None
 
     async def broadcast(self, event: dict[str, Any]) -> None:
+        if event.get("type") == "audio_play":
+            target = self.active_ws if self.active_ws in self.clients else next(iter(self.clients), None)
+            if target is not None:
+                try:
+                    await target.send_json(event)
+                    return
+                except Exception:  # noqa: BLE001
+                    self.clients.discard(target)
+                    if self.active_ws is target:
+                        self.active_ws = None
         dead = []
         for ws in list(self.clients):
             try:
@@ -75,6 +86,8 @@ class Hub:
                 dead.append(ws)
         for ws in dead:
             self.clients.discard(ws)
+            if self.active_ws is ws:
+                self.active_ws = None
 
 
 hub = Hub()
@@ -138,20 +151,60 @@ app = FastAPI(title="Synthia", version=__version__, lifespan=lifespan)
 app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
 
 
+@app.middleware("http")
+async def _no_cache_ui(request: Request, call_next):
+    resp = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/ui/") or request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
+
+
 def _check(token: str | None) -> None:
     if not token or not secrets.compare_digest(token, ACCESS_TOKEN):
         raise HTTPException(status_code=401, detail="invalid token")
 
 
 def state() -> dict[str, Any]:
-    from .skills.memory import _load, memory_count
+    from .learning import learning
+    from .learning.store import memory_store, skill_store
+    from .skills.memory import _load
+
+    notes = _load()
+    user_entries = memory_store.entries("user")
+    env_entries = memory_store.entries("memory")
+    learned_list = skill_store.list()
+    learned_full = [
+        {**s, "content": skill_store.view(s["name"])}
+        for s in learned_list
+    ]
+    tools_detail = [
+        {
+            "name": t.name,
+            "description": t.description,
+            "category": t.category,
+            "risk": t.risk,
+            "params": list(t.parameters.keys()),
+            "required": list(t.required),
+        }
+        for t in registry.tools.values()
+    ]
     return {
         "version": __version__,
         "brain": router.state(),
         "skills": registry.by_category(),
-        "tool_count": len(registry.tools),
-        "memory_count": memory_count(),
-        "memories": _load()[-50:],
+        "tools_detail": tools_detail,
+        "learned_skills": learned_full,
+        "tool_count": len(registry.tools) + len(learned_list),
+        "memory_count": len(notes) + len(user_entries) + len(env_entries),
+        "memories": notes[-50:],
+        "learning_memory": {
+            "user": user_entries,
+            "user_usage": memory_store.usage("user"),
+            "memory": env_entries,
+            "memory_usage": memory_store.usage("memory"),
+            "stats": learning.stats(),
+        },
         "pending_confirms": safety.pending,
         "busy": agent.busy,
         "startup_enabled": is_startup_enabled(),
@@ -206,17 +259,106 @@ async def handle_ws_message(msg: dict[str, Any]) -> None:
     kind = msg.get("type")
     if kind == "command":
         text = (msg.get("text") or "").strip()
+        source = msg.get("source") or "ui"
         if text:
             # ব্যাকগ্রাউন্ডে চালাই, যাতে কাজ চলাকালীনও অনুমতি (confirm) বাটন কাজ করে
-            asyncio.create_task(agent.run(text, session="ui", source="ui", images=msg.get("images")))
+            asyncio.create_task(agent.run(text, session="ui", source=source, images=msg.get("images")))
     elif kind == "confirm":
         safety.resolve(str(msg.get("id")), bool(msg.get("approved")), channel="ui")
     elif kind == "set_model":
         try:
-            router.set_mode(msg.get("mode", "auto"), msg.get("model_id"))
+            router.set_mode(msg.get("mode", "auto"), msg.get("model_id"), msg.get("fallback_on_limit"))
+            if msg.get("model_id"):
+                m = next((x for x in router.list_models() if x["id"] == msg.get("model_id")), None)
+                if m:
+                    await bus.emit("signal", level="ok", title="model", text=f"মডেল সিলেক্ট হয়েছে: {m['label']}")
         except ValueError as e:
             await bus.emit("signal", level="error", title="model", text=str(e))
         await bus.emit("brain_state", **router.state())
+    elif kind == "save_api_key":
+        try:
+            env_key = str(msg.get("env_key") or "").strip()
+            api_key = str(msg.get("api_key") or "").strip()
+            model_id = msg.get("model_id")
+            router.save_api_key(env_key, api_key, model_id)
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="ok", title="api_key",
+                           text=f"🔑 {env_key} সংরক্ষিত হয়েছে!" if api_key else f"🗑️ {env_key} মুছে ফেলা হয়েছে")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="api_key", text=str(e))
+    elif kind == "test_model":
+        mid = str(msg.get("model_id") or "")
+        res = await router.test_model(mid)
+        await bus.emit("model_test_result", model_id=mid, **res)
+        await bus.emit("brain_state", **router.state())
+    elif kind == "add_custom_model":
+        try:
+            added = router.add_custom_model(msg.get("data") or {})
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="ok", title="model", text=f"➕ নতুন মডেল যুক্ত হয়েছে: {added['label']}")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "update_model":
+        try:
+            router.update_model(str(msg.get("model_id") or ""), msg.get("updates") or {})
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="ok", title="model", text="✔ মডেলের সেটিং আপডেট হয়েছে")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "delete_model":
+        try:
+            router.delete_model(str(msg.get("model_id") or ""))
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="info", title="model", text="🗑️ মডেলটি তালিকা থেকে সরানো হয়েছে")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "reset_cooldowns":
+        router.reset_cooldowns()
+        await bus.emit("brain_state", **router.state())
+        await bus.emit("signal", level="ok", title="model", text="🔄 সব মডেলের লিমিট কুলডাউন রিসেট হয়েছে")
+    elif kind == "memory_action":
+        import time as _t
+        from .learning.store import memory_store
+        from .skills.memory import _load, _save
+
+        act = str(msg.get("action") or "")
+        target = str(msg.get("target") or "user")
+        content = str(msg.get("content") or "").strip()
+        old_text = str(msg.get("old_text") or "").strip()
+        if target in ("user", "memory"):
+            res = memory_store.apply(act, target, content, old_text)
+            ok = res.startswith("OK:")
+            await bus.emit("signal", level="ok" if ok else "warn", title="memory", text=res)
+        elif target == "notes":
+            items = _load()
+            if act == "add" and content:
+                items.append({"note": content, "ts": _t.strftime("%Y-%m-%d %H:%M")})
+                _save(items)
+                await bus.emit("signal", level="ok", title="memory", text="✔ নোট সংরক্ষিত হয়েছে")
+            elif act == "remove":
+                idx = msg.get("index")
+                if isinstance(idx, int) and 0 <= idx < len(items):
+                    items.pop(idx)
+                    _save(items)
+                elif old_text:
+                    items = [x for x in items if x.get("note") != old_text]
+                    _save(items)
+                await bus.emit("signal", level="info", title="memory", text="🗑️ নোট মুছে ফেলা হয়েছে")
+        await bus.emit("state", **state())
+    elif kind == "session_search":
+        from .learning.store import session_store
+        q = str(msg.get("query") or "")
+        res = session_store.search(q, limit=12)
+        await bus.emit("session_search_result", query=q, result=res)
+    elif kind == "skill_action":
+        from .learning.store import skill_store
+        act = str(msg.get("action") or "create")
+        name = str(msg.get("name") or "").strip()
+        content = str(msg.get("content") or "").strip()
+        res = skill_store.manage(act, name, content=content, viewed=None)
+        ok = res.startswith("OK:")
+        await bus.emit("signal", level="ok" if ok else "error", title="skill", text=res)
+        await bus.emit("state", **state())
     elif kind == "cancel":
         kill_switch()
     elif kind == "reset":
@@ -274,10 +416,12 @@ async def ws_endpoint(ws: WebSocket) -> None:
         return
     await ws.accept()
     hub.clients.add(ws)
+    hub.active_ws = ws
     await ws.send_json({"type": "state", **state()})
     try:
         while True:
             msg = await ws.receive_json()
+            hub.active_ws = ws
             try:
                 await handle_ws_message(msg)
             except Exception as e:  # noqa: BLE001
