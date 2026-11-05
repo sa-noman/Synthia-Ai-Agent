@@ -241,6 +241,15 @@ async def handle_ws_message(msg: dict[str, Any]) -> None:
         await voice.set_mic(bool(msg.get("enabled")))
     elif kind == "voice_always":
         await voice.set_mic(bool(msg.get("enabled")))
+    elif kind == "voice_listen_toggle":
+        if voice.listening:
+            await voice.stop_listening(commit=True)
+        else:
+            await voice.start_listening(force_mic_on=bool(msg.get("force", False)))
+    elif kind == "voice_listen":
+        await voice.start_listening(force_mic_on=bool(msg.get("force", False)))
+    elif kind == "voice_stop_listen":
+        await voice.stop_listening(commit=bool(msg.get("commit", True)))
     elif kind == "voice_persona":
         await voice.set_persona(str(msg.get("persona", "female")))
     elif kind == "voice_mute":

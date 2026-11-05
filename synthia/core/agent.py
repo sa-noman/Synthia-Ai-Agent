@@ -101,7 +101,7 @@ class Agent:
                 vm = getattr(sys.modules.get("synthia.voice.manager"), "voice", None)
                 if vm and vm.speaking:
                     next_state = "speaking"
-                elif vm and vm.mic_on:
+                elif vm and vm.listening:
                     next_state = "listening"
                 else:
                     next_state = "idle"

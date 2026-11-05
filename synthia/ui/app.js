@@ -443,7 +443,7 @@
   let currentAudio = null, audioCtx = null, speakAnim = null, audioQueue = [];
   const isSpeakingNow = () => !!(voiceState.speaking || currentAudio || audioQueue.length);
   const idleText = () => (voiceState.mic_on ? "Ready · Mic On" : "Ready · Mic Off");
-  const idleHint = () => (voiceState.mic_on ? "Listening Live — বাংলা বা English-এ বলুন" : "Click Crystal Core or 🎙️ to Speak in বাংলা or English");
+  const idleHint = () => (voiceState.mic_on ? "মাঝখানের অরব বা চ্যাটের 🎙️ বাটনে ক্লিক করে কথা বলুন" : "মাইক বন্ধ — কথা বলতে ওপরে Mic On করুন অথবা টাইপ করুন");
 
   function refreshPersona() {
     const p = PERSONA[voiceState.persona] || PERSONA.female;
@@ -488,28 +488,30 @@
     voiceState = { ...voiceState, ...v };
     $$(".persona button[data-voice]").forEach((b) => b.classList.toggle("active", b.dataset.voice === voiceState.persona));
     const micOn = !!voiceState.mic_on;
+    const listening = !!voiceState.listening;
 
     const micBtn = $("#btnMic");
     if (micBtn) {
-      micBtn.classList.toggle("mic-live", micOn);
-      micBtn.textContent = micOn ? "⏹️" : "🎙️";
-      micBtn.title = micOn ? "মাইক চালু — বন্ধ করতে ক্লিক করুন" : "মাইক বন্ধ — চালু করতে ক্লিক করুন";
+      micBtn.classList.toggle("mic-live", listening);
+      micBtn.textContent = listening ? "⏹️" : "🎙️";
+      micBtn.title = listening ? "রেকর্ডিং থামাতে ক্লিক করুন" : "ক্লিক করে কথা বলুন (বাংলা / English)";
     }
     const modeBtn = $("#btnMicMode");
     if (modeBtn) {
       modeBtn.classList.toggle("on", micOn);
-      setText("#micLabel", micOn ? "Mic: Live" : "Mic: Off");
+      setText("#micLabel", micOn ? "Mic: On" : "Mic: Off");
+      modeBtn.title = micOn ? "মাইক্রোফোন অন — বন্ধ করতে ক্লিক করুন" : "মাইক্রোফোন বন্ধ — অন করতে ক্লিক করুন";
     }
     [$("#btnSpeak"), $("#btnMuteTop"), $("#btnSpeakTop2")].forEach((b) => {
       if (!b) return;
       b.textContent = (b.id === "btnMuteTop" ? (voiceState.muted ? "🔇 Unmute" : "🔊 Mute") : voiceState.muted ? "🔇" : "🔊");
       b.classList.toggle("muted-btn", !!voiceState.muted);
     });
-    setText("#composerHint", `Mic: ${micOn ? "Live" : "Off"} · বাংলা বললে বাংলায়, English বললে English-এ উত্তর · Kill: Ctrl+Shift+X`);
+    setText("#composerHint", `Mic: ${micOn ? (listening ? "Listening Live…" : "On") : "Off"} · বাংলা বললে বাংলায়, English বললে English-এ উত্তর · Kill: Ctrl+Shift+X`);
 
     const cs = window.Core && window.Core.state;
-    if (!micOn && cs === "listening") setCore("idle", idleText(), idleHint());
-    else if (micOn && voiceState.listening && cs !== "listening" && !isSpeakingNow()) setCore("listening", "🎙️ Listening Live…", "এখন বলুন");
+    if (listening && cs !== "listening" && !isSpeakingNow()) setCore("listening", "🎙️ Listening Live…", "এখন বলুন · কথা শেষ হলে অটোমেটিক বুঝবে");
+    else if (!listening && cs === "listening") setCore("idle", idleText(), idleHint());
     else if (cs === "idle") setCore("idle", idleText(), idleHint());
     else refreshPersona();
     squadBusy("set_voice_options", !!(voiceState.listening || voiceState.speaking));
@@ -589,10 +591,30 @@
   }
   document.addEventListener("pointerdown", unlockAudio, { passive: true });
   document.addEventListener("keydown", unlockAudio, { passive: true });
-  // সব মাইক বাটন একই কাজ করে: মাইক অন/অফ টগল
-  function toggleMic() { unlockAudio(); send({ type: "voice_toggle" }); }
-  window.addEventListener("core-orb-click", toggleMic);
-  ["#corePill", "#btnMic", "#btnMicMode"].forEach((s) => on(s, "click", toggleMic));
+  // মাইক্রোফোন অন/অফ সুইচ (জাস্ট অন/অফ হবে, নিজে নিজে রেকর্ড বা শোনা শুরু করবে না)
+  function toggleMicPower() {
+    unlockAudio();
+    send({ type: "voice_toggle" });
+  }
+  ["#corePill", "#btnMicMode"].forEach((s) => on(s, "click", toggleMicPower));
+
+  // মাঝখানের Crystal Core অরব ক্লিক:
+  // - মাইক অফ থাকলে কিছুই হবে না (মিউট থাকবে, অটো চালু হবে না)
+  // - কেবল মাইক অন থাকলেই কথা শোনা শুরু হবে (বা থামাতে চাইলে বন্ধ হবে)
+  window.addEventListener("core-orb-click", () => {
+    unlockAudio();
+    if (!voiceState.mic_on) {
+      setCore("idle", "Ready · Mic Off", "মাইক বন্ধ আছে — কথা বলতে ওপরে Mic On করুন");
+      return;
+    }
+    send({ type: "voice_listen_toggle", force: false });
+  });
+
+  // চ্যাট ইন্টারফেসের মাইক বাটন: ক্লিক করলে শোনা শুরু হবে (প্রয়োজনে মাইক অন করবে)
+  on("#btnMic", "click", () => {
+    unlockAudio();
+    send({ type: "voice_listen_toggle", force: true });
+  });
   $$(".persona button[data-voice]").forEach((b) => b.addEventListener("click", () => send({ type: "voice_persona", persona: b.dataset.voice })));
   const toggleMute = () => send({ type: "voice_mute", muted: !voiceState.muted });
   ["#btnSpeak", "#btnMuteTop", "#btnSpeakTop2"].forEach((s) => on(s, "click", toggleMute));
