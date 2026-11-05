@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
+from ..learning import learning
 from .events import bus
 from .llm.providers import LLMError
 from .llm.router import router
@@ -68,7 +69,7 @@ class Agent:
                 os=f"{platform.system()} {platform.release()}",
                 home=str(Path.home()),
                 workspace=str(settings.path("paths.workspace", "./workspace")),
-            ) + f"\n{lang_rule}{voice_rule}",
+            ) + f"\n{lang_rule}{voice_rule}" + (f"\n\n{learning.prompt_block()}" if learning.prompt_block() else ""),
         }
 
     def reset(self, session: str = "ui") -> None:
@@ -113,6 +114,8 @@ class Agent:
         if images:
             user_msg["images"] = images
         history.append(user_msg)
+        learning.log_message(session, "user", text)
+        n_tools = n_ok = 0
         await bus.emit("chat", role="user", text=text, source=source, session=session)
         await bus.emit("task_start", task_id=task_id, text=text, source=source)
 
@@ -161,6 +164,8 @@ class Agent:
                 t0 = time.time()
                 result = await registry.call(c["name"], c["arguments"])
                 ok = not result.startswith("ERROR") and not result.startswith("DENIED")
+                n_tools += 1
+                n_ok += int(ok)
                 await bus.emit("tool_end", task_id=task_id, step_id=step_id, tool=c["name"],
                                ok=ok, result=result[:600], ms=int((time.time() - t0) * 1000))
                 history.append({"role": "tool", "tool_call_id": c["id"], "name": c["name"],
@@ -174,6 +179,8 @@ class Agent:
             m.pop("images", None)
         await bus.emit("chat", role="assistant", text=final, source=source, session=session)
         await bus.emit("task_end", task_id=task_id)
+        learning.log_message(session, "assistant", final)
+        learning.after_turn(session, text, history, n_tools, n_ok)
         return final
 
 

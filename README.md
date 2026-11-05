@@ -44,6 +44,14 @@
   - `bn-BD-PradeepNeural` (পুরুষ কণ্ঠ)
   - অফলাইন Windows SAPI ও Google TTS ফলব্যাক সাপোর্ট।
 
+### 🧬 Learning Engine (Hermes-style, built into Synthia)
+- **Memory:** `MEMORY.md` (পরিবেশ) + `USER.md` (আপনার পছন্দ) — `synthia_data/learning/`
+- **Skills:** এজেন্ট নিজে `SKILL.md` লিখে ও সংশোধন করে; দরকারে `skill_view` দিয়ে পড়ে
+- **Session search:** সব পুরনো কথোপকথন SQLite FTS5-এ খোঁজা যায় (`session_search`)
+- **Background review:** কাজ শেষে/সংশোধনের পর নিজে রিভিউ করে শেখে — `config/settings.yaml → learning`
+- **Pluggable:** নতুন শেখার পদ্ধতি (যেমন OpenClaw-style) `synthia/learning/methods.py`-এ যোগ করা যায়
+- ধারণা: [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) (MIT) — [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+
 ### 🖥️ 3. Futuristic Desktop Command Bridge (ফিউচারিস্টিক ইউআই)
 - **3D Interactive Particle Orb:** ব্রাউজার/ওয়েবভিউ-তে রিয়েল-টাইম ১১০০ পয়েন্টের গোল্ডেন স্পাইরাল পার্টিকেল অর্র্ব।
 - **Audio-Reactive Waves:** কথা শোনা (Listening) ও কথা বলার (Speaking) সময় লাইভ অডিও-রিঅ্যাক্টিভ অ্যানিমেশন।

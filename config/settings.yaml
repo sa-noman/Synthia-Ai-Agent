@@ -30,3 +30,13 @@ paths:
   workspace: ./workspace
   # Synthia-র জন্য আলাদা Chrome প্রোফাইল (ধাপ ৩-এ ব্যবহার হবে)
   chrome_profile: ./synthia_data/chrome_profile
+
+
+learning:
+  # Hermes-স্টাইল শেখার ইঞ্জিন: মেমোরি + স্কিল + পুরনো কথোপকথন সার্চ + ব্যাকগ্রাউন্ড রিভিউ
+  enabled: true
+  # সক্রিয় শেখার পদ্ধতি (synthia/learning/methods.py-তে নতুন পদ্ধতি যোগ করা যায়)
+  methods: [hermes_review]
+  memory_interval: 6      # এত টার্ন পরপর মেমোরি রিভিউ
+  skill_interval: 6       # এত টুল-কল পরপর স্কিল রিভিউ
+  review_max_steps: 8
