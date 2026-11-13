@@ -514,6 +514,11 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void httpRequest(final String urlStr, final String method, final String bodyJson, final String callbackName) {
+            httpRequest(urlStr, method, bodyJson, "", callbackName);
+        }
+
+        @JavascriptInterface
         public void httpRequest(final String urlStr, final String method, final String bodyJson, final String bridgeId, final String callbackName) {
             executor.execute(() -> {
                 JSONObject res = new JSONObject();

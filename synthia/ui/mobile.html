@@ -520,10 +520,15 @@
           } catch (e) { reject(e); }
         };
         const bid = allowCloud ? (cfg.bridgeId || "") : "";
-        if (nat.httpRequest.length >= 5) {
+        try {
           nat.httpRequest(url, method, bodyStr, bid, cbId);
-        } else {
-          nat.httpRequest(url, method, bodyStr, cbId);
+        } catch (e1) {
+          try {
+            nat.httpRequest(url, method, bodyStr, cbId);
+          } catch (e2) {
+            delete window[cbId];
+            reject(e1 || e2);
+          }
         }
       });
     }
