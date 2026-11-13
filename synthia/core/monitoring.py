@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 import psutil
 
-from ..config import ROOT, settings
+from ..config import ROOT, hidden_subprocess_kwargs, settings
 
 
 class ErrorStore:
@@ -108,7 +108,7 @@ def get_gpu_metrics() -> dict[str, Any] | None:
             capture_output=True,
             text=True,
             timeout=3,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **hidden_subprocess_kwargs(),
         )
         if out.returncode != 0:
             return None

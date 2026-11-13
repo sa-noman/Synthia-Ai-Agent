@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..config import ROOT, settings
+from ..config import ROOT, hidden_subprocess_kwargs, settings
 from ..core.agent import user_dirs
 from ..core.safety import safety
 from ..core.tools import DESTRUCTIVE, SAFE, SENSITIVE, tool
@@ -89,7 +89,6 @@ async def execute_python(code: str, timeout_sec: int = 30) -> str:
     ws = settings.path("paths.workspace", "./workspace")
 
     def _run() -> str:
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         t0 = time.time()
         try:
             cmd = [py_exec, "-c", code]
@@ -101,7 +100,7 @@ async def execute_python(code: str, timeout_sec: int = 30) -> str:
                 cwd=str(ws),
                 encoding="utf-8",
                 errors="replace",
-                creationflags=flags,
+                **hidden_subprocess_kwargs(),
             )
             elapsed_ms = int((time.time() - t0) * 1000)
             stdout = res.stdout.strip()

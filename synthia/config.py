@@ -128,3 +128,17 @@ class Settings:
 
 
 settings = Settings()
+
+
+def hidden_subprocess_kwargs() -> dict[str, Any]:
+    """Windows-এ ব্যাকগ্রাউন্ডে কমান্ড চালানোর সময় যেকোনো কনসোল বা কালো উইন্ডো পপ-আপ সম্পূর্ণ বন্ধ করে।"""
+    if os.name == "nt":
+        import subprocess
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        return {
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+            "startupinfo": si,
+        }
+    return {}

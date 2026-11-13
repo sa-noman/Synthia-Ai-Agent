@@ -10,6 +10,7 @@ from pathlib import Path
 
 import psutil
 
+from ..config import hidden_subprocess_kwargs
 from ..core.safety import safety
 from ..core.tools import DESTRUCTIVE, SENSITIVE, tool
 
@@ -55,10 +56,13 @@ def open_app(name: str) -> str:
     if key in APP_ALIASES:
         target = APP_ALIASES[key]
         try:
-            if target.endswith(":"):
-                os.startfile(target)  # type: ignore[attr-defined]
-            else:
-                subprocess.Popen(f'start "" {target}', shell=True)
+            if hasattr(os, "startfile"):
+                try:
+                    os.startfile(target)  # type: ignore[attr-defined]
+                    return f"OK: opened {name}"
+                except Exception:
+                    pass
+            subprocess.Popen(f'start "" "{target}"', shell=True, **hidden_subprocess_kwargs())
             return f"OK: opened {name}"
         except Exception as e:  # noqa: BLE001
             return f"ERROR: could not open {name}: {e}"
@@ -70,10 +74,19 @@ def open_app(name: str) -> str:
         if close:
             match = shortcuts[sorted(close, key=len)[0]]
     if match:
-        os.startfile(str(match))  # type: ignore[attr-defined]
+        if hasattr(os, "startfile"):
+            os.startfile(str(match))  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(f'start "" "{match}"', shell=True, **hidden_subprocess_kwargs())
         return f"OK: opened {match.stem}"
     try:
-        subprocess.Popen(f'start "" "{name}"', shell=True)
+        if hasattr(os, "startfile"):
+            try:
+                os.startfile(name)
+                return f"OK: opened {name}"
+            except Exception:
+                pass
+        subprocess.Popen(f'start "" "{name}"', shell=True, **hidden_subprocess_kwargs())
         return f"Tried to start '{name}' via Windows (no shortcut found; may fail silently)."
     except Exception as e:  # noqa: BLE001
         return f"ERROR: app '{name}' not found: {e}"
@@ -121,8 +134,12 @@ def _gpu() -> dict | None:
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
-             "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=3,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+             "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            **hidden_subprocess_kwargs(),
+        )
         name, util, used, total, temp = [x.strip() for x in out.stdout.strip().split(",")]
         return {"name": name, "util": int(util), "vram_used_mb": int(used),
                 "vram_total_mb": int(total), "temp_c": int(temp)}
@@ -189,7 +206,7 @@ async def run_command(command: str, cwd: str = "") -> str:
     def _run() -> str:
         r = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True,
                            text=True, timeout=120, cwd=cwd or None, encoding="utf-8", errors="replace",
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                           **hidden_subprocess_kwargs())
         return f"exit={r.returncode}\n{r.stdout[-6000:]}\n{r.stderr[-2000:]}".strip()
 
     import asyncio

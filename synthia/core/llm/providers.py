@@ -49,12 +49,16 @@ async def ensure_ollama_running(base_url: str = "http://127.0.0.1:11434") -> boo
         return False
 
     flags = 0
+    si = None
     if os.name == "nt":
         flags = (
             getattr(subprocess, "CREATE_NO_WINDOW", 0)
             | getattr(subprocess, "DETACHED_PROCESS", 0)
             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         )
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
     try:
         subprocess.Popen(
             [exe, "serve"],
@@ -62,6 +66,7 @@ async def ensure_ollama_running(base_url: str = "http://127.0.0.1:11434") -> boo
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=flags,
+            startupinfo=si,
             close_fds=True,
         )
     except OSError:

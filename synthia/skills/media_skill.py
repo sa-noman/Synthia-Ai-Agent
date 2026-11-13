@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from ..config import settings
+from ..config import hidden_subprocess_kwargs, settings
 from ..core.events import bus
 from ..core.llm.router import router
 from ..core.tools import tool
@@ -147,7 +147,7 @@ async def capture_screen(filename: str = "", analyze: bool = False, prompt: str 
         $g.Dispose()
         $bmp.Dispose()
         '''
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, **hidden_subprocess_kwargs())
         captured = dest.exists() and dest.stat().st_size > 1000
 
     if not captured or not dest.exists():

@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 import psutil
 
-from ..config import ROOT
+from ..config import ROOT, hidden_subprocess_kwargs
 from ..core.events import bus
 from ..core.tools import tool
 
@@ -195,7 +195,7 @@ async def _ensure_cdp_browser(initial_url: str = "") -> bool:
     if initial_url:
         cmd.append(initial_url)
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **hidden_subprocess_kwargs())
         if proc.pid:
             _SYNTHIA_BROWSER_PIDS.add(proc.pid)
     except OSError:

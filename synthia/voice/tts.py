@@ -19,6 +19,8 @@ import uuid
 
 import httpx
 
+from ..config import hidden_subprocess_kwargs
+
 VOICES = {
     ("bn", "female"): "bn-BD-NabanitaNeural",
     ("bn", "male"): "bn-BD-PradeepNeural",
@@ -68,7 +70,7 @@ def _ensure_edge_tts_bg() -> None:
                 [sys.executable, "-m", "pip", "install", "--quiet", "edge-tts>=7.0"],
                 timeout=45,
                 capture_output=True,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                **hidden_subprocess_kwargs(),
             )
         except Exception:  # noqa: BLE001
             pass
