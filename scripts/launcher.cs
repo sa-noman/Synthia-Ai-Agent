@@ -42,8 +42,10 @@ static class Program
                     req.ContentLength = 0;
                     req.Timeout = 1500;
                     using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                    using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                     {
-                        if ((int)resp.StatusCode == 200)
+                        string body = sr.ReadToEnd();
+                        if ((int)resp.StatusCode == 200 && Regex.IsMatch(body, "\"shown\"\\s*:\\s*true"))
                             return 0;
                     }
                 }

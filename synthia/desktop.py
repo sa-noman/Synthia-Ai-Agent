@@ -169,14 +169,15 @@ class DesktopShell:
             except Exception:  # noqa: BLE001
                 pass
 
-    def show_window(self) -> None:
+    def show_window(self) -> bool:
         if not self.window:
-            return
+            return False
         try:
             self.window.show()
             self.window.restore()
+            return True
         except Exception:  # noqa: BLE001
-            pass
+            return False
 
     def quit_app(self) -> None:
         self.quitting = True

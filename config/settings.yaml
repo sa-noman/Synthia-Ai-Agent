@@ -7,13 +7,13 @@ assistant:
   language: auto
 
 server:
-  host: 127.0.0.1
+  host: 0.0.0.0
   port: 8765
 
 brain:
   # auto   = নেট থাকলে ক্লাউড API (priority অনুযায়ী), লিমিট শেষ হলে পরেরটা, নেট না থাকলে লোকাল
   # manual = UI থেকে যে মডেল বেছে দেবেন শুধু সেটাই চলবে
-  mode: auto
+  mode: manual
   # manual মোডের ডিফল্ট মডেল (models.yaml-এর id)
   manual_model: local-gemma4
   max_steps: 12          # এক কমান্ডে সর্বোচ্চ কত ধাপ টুল চালাবে

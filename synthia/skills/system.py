@@ -98,6 +98,9 @@ def list_running_apps() -> str:
 async def close_app(name: str) -> str:
     key = name.lower().replace(".exe", "").strip()
     key = APP_ALIASES.get(key, key)
+    if key in ("chrome", "msedge", "browser", "ব্রাউজার"):
+        from .ai_bridge import close_synthia_browser
+        return await close_synthia_browser()
     targets = [p for p in psutil.process_iter(["name", "pid"])
                if (p.info["name"] or "").lower().replace(".exe", "") == key]
     if not targets:
@@ -200,3 +203,46 @@ async def run_command(command: str, cwd: str = "") -> str:
 def lock_pc() -> str:
     ctypes.windll.user32.LockWorkStation()
     return "OK: locked"
+
+
+@tool(
+    "switch_ai_model",
+    "Switch Synthia's internal AI brain model ONLY when the user explicitly asks to change/use an AI model or brain mode (mentioning 'model'/'মডেল'/'brain'). NEVER call this tool when the user asks to open a website or browser (e.g. Gemini website, Google, ChatGPT) — use open_url instead.",
+    {
+        "model_name": {"type": "string", "description": "Name or ID of model/platform to switch to (e.g. qwen, gemma4, local, gemini, gpt-4o, openrouter)"},
+        "mode": {"type": "string", "description": "manual or auto (default: manual when switching to a specific model)"},
+    },
+    required=[],
+    category="system",
+)
+async def switch_ai_model(model_name: str = "", mode: str = "") -> str:
+    from ..core.llm.router import router
+    try:
+        res = await router.switch_by_command(query=model_name, mode=mode.strip().lower() or None)
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR: {e}"
+    cfg = res.get("model") or {}
+    m_label = cfg.get("label", cfg.get("id", "unknown"))
+    m_code = cfg.get("model", cfg.get("id", ""))
+    return f"OK: Switched to {m_label} ({m_code}) in {res.get('mode', 'manual').upper()} mode."
+
+
+@tool(
+    "get_ai_model_status",
+    "Get currently running AI model, mode (auto/manual), and list of installed local and cloud models.",
+    category="system",
+)
+def get_ai_model_status() -> str:
+    from ..core.llm.router import router
+    st = router.state()
+    models = st.get("models", [])
+    cur = next((m for m in models if m["id"] == st.get("active")), None)
+    locals_ = [m for m in models if m.get("local")]
+    ready_cloud = [m for m in models if not m.get("local") and m.get("available")]
+    lines = [
+        f"Active model: {cur.get('label')} ({cur.get('model')})" if cur else f"Active model: {st.get('active')}",
+        f"Mode: {st.get('mode', 'auto').upper()}",
+        "Installed Local Models: " + (", ".join(f"{m['label']} [{m['model']}]" for m in locals_) or "None"),
+        "Ready Cloud Models: " + (", ".join(f"{m['label']} [{m['model']}]" for m in ready_cloud[:8]) or "None"),
+    ]
+    return "\n".join(lines)

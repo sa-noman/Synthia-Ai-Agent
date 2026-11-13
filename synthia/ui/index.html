@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SYNTHIA · Command Bridge</title>
 <link rel="icon" href="/favicon.ico" />
-<link rel="stylesheet" href="/ui/style.css?v=7" />
+<link rel="stylesheet" href="/ui/style.css?v=16" />
 </head>
 <body>
 <div id="app">
@@ -94,7 +94,7 @@
           <button data-cmd="workspace ফোল্ডারটা খোলো">📂 Workspace</button>
           <button data-open="memory">🧠 Memory</button>
           <button class="soon" title="পরবর্তী ধাপে আসছে">🎬 Studio</button>
-          <button class="soon" title="পরবর্তী ধাপে আসছে">📡 Remote</button>
+          <button data-open="squad:remote" title="মোবাইল অ্যাপ কানেকশন ও APK ডাউনলোড">📡 Remote</button>
         </div>
       </section>
     </aside>
@@ -203,10 +203,16 @@
     <aside class="col col-right panel" id="colRight">
       <div class="tabs" data-tabs="right">
         <button class="active" data-tab="chatView">Chat</button>
-        <button data-tab="traceView">Trace</button>
-        <button data-tab="memTabView">Memory</button>
+        <button data-tab="memTabView" id="tabBtnHistory">History</button>
+        <button data-tab="mobTabView" id="tabBtnMobile" title="মোবাইল অ্যাপ থেকে দেওয়া কমান্ডের হিস্ট্রি">📱 Mobile</button>
         <span class="spacer"></span>
-        <button class="icon-btn sm" id="btnReset" title="নতুন কথোপকথন">🗑️ New</button>
+        <button class="btn-new-chat" id="btnReset" title="নতুন কথোপকথন">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z"/>
+          </svg>
+          <span>New chat</span>
+        </button>
       </div>
 
       <div class="tab-body active chat" id="chatView">
@@ -225,8 +231,9 @@
           </div>
         </div>
       </div>
-      <div class="tab-body trace" id="traceView"></div>
+      <div class="tab-body trace" id="traceView" hidden></div>
       <div class="tab-body mem-tab" id="memTabView"><ul class="timeline" id="memList"></ul></div>
+      <div class="tab-body mem-tab" id="mobTabView"><ul class="timeline" id="mobHistList"></ul></div>
 
       <div class="splitter splitter-h" data-split="rightComposer" title="ইনপুট বক্স টেনে বড়-ছোট করুন (ডাবল-ক্লিক = রিসেট)"></div>
 
@@ -272,31 +279,31 @@
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <button class="btn-sm" id="btnResetCooldowns" title="সব মডেলের রেট-লিমিট কুলডাউন রিসেট করুন">🔄 Reset Limits</button>
+        <button class="btn-sm" id="btnRestoreDefaults" title="মুছে ফেলা বা ডিফল্ট সব মডেল রিস্টোর করুন">♻️ Restore Defaults</button>
         <button class="btn-sm btn-accent" id="btnToggleAddModel">➕ Add Custom API / Model</button>
       </div>
     </div>
     <div class="models-info-bar">
-      <label class="check" style="margin:0;font-size:1.15rem;">
-        <input type="checkbox" id="chkFallbackOnLimit" checked />
-        <span>⚡ <b>Smart Auto-Switch:</b> কোনো মডেলের লিমিট/কোটা শেষ হলে বা এরর দিলে অটোমেটিক পরের সচল মডেলে সুইচ করবে</span>
-      </label>
-      <div class="muted" style="margin-top:0.45rem;line-height:1.5;">
-        নিচের যেকোনো মডেলে <b>🔑 + Add API Key</b> বাটনে ক্লিক করে API Key পেস্ট করুন এবং <b>Save &amp; Use</b> চাপুন — সাথে সাথে সেই মডেলটি চালু হয়ে যাবে।
+      <div class="muted" style="line-height:1.55;">
+        <b>⚡ Auto Mode:</b> কোনো মডেল লিমিট/এররে পরের সচল মডেলে অটো সুইচ করবে। &nbsp;|&nbsp;
+        <b>📌 Manual Mode:</b> সিলেক্ট করা মডেলই লক থাকবে, অটো সুইচ হবেনা — লিমিট শেষ হলে সতর্কবার্তা দেখাবে।<br/>
+        এখানে শুধু <b>API প্ল্যাটফর্ম</b> ও তার Key পরিচালনা করুন; নির্দিষ্ট মডেল সিলেক্ট করতে টপবারের মডেল ড্রপডাউন অথবা প্ল্যাটফর্মের <b>✏️ Edit</b> ব্যবহার করুন।
       </div>
     </div>
 
     <div id="customModelBox" class="custom-model-box" hidden>
-      <div class="cm-title">➕ নতুন API বা লোকাল মডেল যুক্ত করুন</div>
+      <div class="cm-title">➕ নতুন API প্ল্যাটফর্ম বা মডেল যুক্ত করুন</div>
       <div class="cm-grid">
-        <input id="cmLabel" type="text" placeholder="মডেলের নাম (যেমন: DeepSeek V3 / OpenAI GPT-4o)" />
+        <input id="cmProviderName" type="text" placeholder="প্ল্যাটফর্ম / API নাম (যেমন: OpenRouter / DeepSeek)" />
         <select id="cmProvider">
           <option value="openai_compat">☁️ Cloud (OpenAI-Compatible API)</option>
           <option value="ollama">💻 Local (Ollama)</option>
         </select>
-        <input id="cmBaseUrl" type="text" placeholder="Base URL (যেমন: https://api.deepseek.com/v1)" value="https://openrouter.ai/api/v1" />
-        <input id="cmModel" type="text" placeholder="Model ID (যেমন: deepseek-chat বা gpt-4o-mini)" />
-        <input id="cmEnvKey" type="text" placeholder="Env Key নাম (যেমন: DEEPSEEK_API_KEY)" />
+        <input id="cmBaseUrl" type="text" placeholder="Base URL (যেমন: https://openrouter.ai/api/v1)" value="https://openrouter.ai/api/v1" />
+        <input id="cmModel" type="text" placeholder="ডিফল্ট Model ID (যেমন: deepseek/deepseek-chat)" />
+        <input id="cmEnvKey" type="text" placeholder="Env Key নাম (যেমন: OPENROUTER_API_KEY)" />
         <input id="cmApiKey" type="password" placeholder="API Key পেস্ট করুন (ঐচ্ছিক, পরেও দেওয়া যাবে)" />
+        <input id="cmLabel" type="text" placeholder="মডেলের ডিসপ্লে নাম (ঐচ্ছিক)" />
         <input id="cmPriority" type="number" placeholder="Priority (1-99)" value="35" min="1" max="200" />
         <label class="check" style="margin:0;"><input type="checkbox" id="cmVision" /> 👁 Vision সাপোর্ট আছে</label>
       </div>
@@ -318,7 +325,7 @@
   </div>
 </div>
 
-<script src="/ui/core.js?v=7"></script>
-<script src="/ui/app.js?v=7"></script>
+<script src="/ui/core.js?v=16"></script>
+<script src="/ui/app.js?v=16"></script>
 </body>
 </html>

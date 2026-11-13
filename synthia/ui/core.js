@@ -25,6 +25,21 @@
   let audioLevel = 0, targetLevel = 0, hoverOrb = false;
   let G = { cx: 0, cy: 0, R: 60, x0: 0, x1: 0 };
 
+  /* ---------- Idle অবস্থায় ৮-১০ সেকেন্ড পর পর হালকা কালার পরিবর্তন ---------- */
+  const IDLE_PALETTE = [
+    [46, 242, 208],   // Cyber Teal (Synthia Default)
+    [56, 189, 248],   // Electric Sky
+    [129, 140, 248],  // Lavender Indigo
+    [167, 139, 250],  // Neon Violet
+    [244, 114, 182],  // Cosmic Rose
+    [52, 235, 155],   // Mint Emerald
+    [45, 226, 255],   // Crystal Cyan
+    [251, 191, 36],   // Amber Gold
+  ];
+  let idlePaletteIndex = 0;
+  let lastColorSwitch = Date.now();
+  const COLOR_SWITCH_INTERVAL = 9000; // ৯ সেকেন্ডে একবার বদলাবে (৮-১০ সে.)
+
   /* ---------- গোলক: প্রথম কোডের মতো ১১০০ কণা (গোল্ডেন-স্পাইরাল) ---------- */
   const N = 1100, pts = [], golden = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < N; i++) {
@@ -207,7 +222,20 @@
   function frame() {
     if (W && H) {
       const S = STATES[state] || STATES.idle;
-      for (let i = 0; i < 3; i++) col[i] += (S.c[i] - col[i]) * 0.07;
+      let targetColor;
+      if (state === "idle") {
+        const now = Date.now();
+        if (now - lastColorSwitch > COLOR_SWITCH_INTERVAL) {
+          idlePaletteIndex = (idlePaletteIndex + 1) % IDLE_PALETTE.length;
+          lastColorSwitch = now;
+        }
+        targetColor = IDLE_PALETTE[idlePaletteIndex];
+      } else {
+        targetColor = S.c;
+      }
+      for (let i = 0; i < 3; i++) {
+        col[i] += (targetColor[i] - col[i]) * (state === "idle" ? 0.025 : 0.07);
+      }
       audioLevel += (targetLevel - audioLevel) * 0.25;
       targetLevel *= 0.9;
       rot += S.speed + audioLevel * 0.008;
@@ -234,5 +262,6 @@
     relayout: resize,
     center() { return { cx: G.cx, cy: G.cy, R: G.R }; },
     get state() { return state; },
+    get color() { return tc(col); },
   };
 })();

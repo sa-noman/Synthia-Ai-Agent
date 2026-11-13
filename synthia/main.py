@@ -32,8 +32,9 @@ from .desktop import (
 
 
 def _port_free(host: str, port: int) -> bool:
+    check_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
     with socket.socket() as s:
-        return s.connect_ex((host, port)) != 0
+        return s.connect_ex((check_host, port)) != 0
 
 
 def _focus_existing(rt_file) -> bool:
@@ -107,10 +108,11 @@ def main() -> None:
     ensure_first_run_shortcuts()
     server = _start_server(host, port)
     from .server import ACCESS_TOKEN
-    url = f"http://{host}:{port}/?token={ACCESS_TOKEN}"
+    local_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    url = f"http://{local_host}:{port}/?token={ACCESS_TOKEN}"
     rt_file.parent.mkdir(parents=True, exist_ok=True)
     rt_file.write_text(
-        json.dumps({"host": host, "port": port, "token": ACCESS_TOKEN, "url": url}, indent=2),
+        json.dumps({"host": local_host, "port": port, "token": ACCESS_TOKEN, "url": url}, indent=2),
         encoding="utf-8",
     )
     threading.Thread(target=_hotkey_thread, daemon=True, name="synthia-hotkey").start()

@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import ipaddress
 import secrets
+import socket
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,6 +13,7 @@ from typing import Any
 
 import psutil
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -56,6 +60,56 @@ def _is_local_request(host: str | None, origin: str | None) -> bool:
         if not any(orig.startswith(f"http://{lh}") or orig.startswith(f"https://{lh}") for lh in _LOCAL_HOSTS):
             return False
     return True
+
+
+def _is_private_ip(ip_str: str | None) -> bool:
+    if not ip_str:
+        return False
+    clean = ip_str.split("%")[0].strip()
+    if clean in ("localhost", "testserver"):
+        return True
+    try:
+        ip = ipaddress.ip_address(clean)
+        return ip.is_loopback or ip.is_private
+    except ValueError:
+        return False
+
+
+def _get_lan_ips() -> list[str]:
+    """পিসির আসল Wi-Fi/Ethernet LAN IP গুলো অগ্রাধিকার দিয়ে বের করে (VPN/Virtual বাদে)।"""
+    scored: list[tuple[int, str]] = []
+    try:
+        for nic, addrs in psutil.net_if_addrs().items():
+            low = nic.lower()
+            is_virtual = any(v in low for v in ("virtual", "vmware", "vbox", "vethernet", "wsl", "hyper-v", "surfshark", "vpn", "openvpn", "wireguard", "tailscale", "loopback", "bluetooth"))
+            for a in addrs:
+                if a.family != socket.AF_INET:
+                    continue
+                ip = a.address
+                if ip.startswith("127.") or ip.startswith("169.254."):
+                    continue
+                if not _is_private_ip(ip):
+                    continue
+                score = 0
+                if not is_virtual:
+                    score += 100
+                if "wi-fi" in low or "wifi" in low or "wlan" in low:
+                    score += 50
+                elif "ethernet" in low:
+                    score += 40
+                if ip.startswith("192.168.") and not ip.startswith("192.168.56."):
+                    score += 30
+                elif ip.startswith("10."):
+                    score += 10
+                scored.append((score, ip))
+    except Exception:  # noqa: BLE001
+        pass
+    scored.sort(key=lambda x: x[0], reverse=True)
+    ips: list[str] = []
+    for _, ip in scored:
+        if ip not in ips:
+            ips.append(ip)
+    return ips or ["127.0.0.1"]
 
 load_skills()
 
@@ -117,11 +171,13 @@ async def _warm_local_model() -> None:
     যেন প্রথম ভয়েস বা চ্যাট কমান্ডেই ইনস্ট্যান্ট (১ সেকেন্ডে) উত্তর পাওয়া যায়।"""
     import httpx
     from .config import settings
+    from .core.llm.providers import ensure_ollama_running
 
     local_cfg = next((m for m in settings.models if m.get("provider") == "ollama"), None)
     if not local_cfg:
         return
     base_url = local_cfg.get("base_url", "http://127.0.0.1:11434").rstrip("/")
+    await ensure_ollama_running(base_url)
     body = {
         "model": local_cfg["model"],
         "messages": [{"role": "user", "content": "hi"}],
@@ -143,11 +199,21 @@ async def lifespan(app: FastAPI):
     MAIN_LOOP = asyncio.get_running_loop()
     task = asyncio.create_task(_telemetry_loop())
     asyncio.create_task(_warm_local_model())
+    from .cloud_bridge import cloud_bridge
+    cloud_bridge.start(app, ACCESS_TOKEN)
     yield
+    await cloud_bridge.stop()
     task.cancel()
 
 
 app = FastAPI(title="Synthia", version=__version__, lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
 
 
@@ -167,7 +233,7 @@ def _check(token: str | None) -> None:
 
 def state() -> dict[str, Any]:
     from .learning import learning
-    from .learning.store import memory_store, skill_store
+    from .learning.store import memory_store, session_store, skill_store
     from .skills.memory import _load
 
     notes = _load()
@@ -189,6 +255,11 @@ def state() -> dict[str, Any]:
         }
         for t in registry.tools.values()
     ]
+    from .config import settings
+    from .cloud_bridge import cloud_bridge
+    lan_ips = _get_lan_ips()
+    port = int(settings.get("server.port", 8765))
+    apk_exists = (ROOT / "SynthiaMobile.apk").exists()
     return {
         "version": __version__,
         "brain": router.state(),
@@ -209,12 +280,45 @@ def state() -> dict[str, Any]:
         "busy": agent.busy,
         "startup_enabled": is_startup_enabled(),
         "voice": voice.state(),
+        "chat_history": session_store.list_threads(limit=40, mobile=False),
+        "mobile_history": session_store.list_threads(limit=40, mobile=True),
+        "active_thread": agent.active_thread,
+        "active_mobile_thread": agent.active_mobile_thread,
+        "mobile": {
+            "lan_ips": lan_ips,
+            "primary_ip": lan_ips[0] if lan_ips else "127.0.0.1",
+            "port": port,
+            "token": ACCESS_TOKEN,
+            "apk_ready": apk_exists,
+            "apk_url": f"http://{lan_ips[0]}:{port}/apk" if lan_ips else f"http://127.0.0.1:{port}/apk",
+            "mobile_url": f"http://{lan_ips[0]}:{port}/mobile?token={ACCESS_TOKEN}" if lan_ips else "",
+            "connected_clients": len(hub.clients),
+            "cloud_bridge": cloud_bridge.status(),
+        },
     }
 
 
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(UI_DIR / "index.html")
+
+
+@app.get("/mobile")
+async def mobile_index() -> FileResponse:
+    return FileResponse(UI_DIR / "mobile.html")
+
+
+@app.api_route("/apk", methods=["GET", "HEAD"])
+@app.api_route("/SynthiaMobile.apk", methods=["GET", "HEAD"])
+async def download_apk() -> FileResponse:
+    apk = ROOT / "SynthiaMobile.apk"
+    if not apk.exists():
+        raise HTTPException(status_code=404, detail="SynthiaMobile.apk not built yet")
+    return FileResponse(
+        apk,
+        media_type="application/vnd.android.package-archive",
+        filename="SynthiaMobile.apk",
+    )
 
 
 @app.get("/favicon.ico")
@@ -225,8 +329,8 @@ async def favicon() -> FileResponse:
 @app.post("/api/show")
 async def api_show(token: str) -> JSONResponse:
     _check(token)
-    await asyncio.to_thread(shell.show_window)
-    return JSONResponse({"ok": True})
+    shown = await asyncio.to_thread(shell.show_window)
+    return JSONResponse({"ok": True, "shown": bool(shown)})
 
 
 @app.get("/api/bootstrap")
@@ -253,6 +357,127 @@ async def api_command(request: Request) -> JSONResponse:
         raise HTTPException(400, "empty text")
     reply = await agent.run(text, session=body.get("session", "api"), source=body.get("source", "api"))
     return JSONResponse({"reply": reply})
+
+
+@app.get("/api/mobile/ping")
+async def api_mobile_ping(request: Request, token: str | None = None) -> JSONResponse:
+    """মোবাইল অ্যাপ অটো-ডিসকভারি ও হ্যান্ডশেক (শুধু লোকাল Wi-Fi LAN বা বৈধ টোকেনের জন্য)।"""
+    client_ip = request.client.host if request.client else ""
+    if token:
+        _check(token)
+    elif not _is_private_ip(client_ip):
+        raise HTTPException(status_code=403, detail="forbidden external host")
+    from .config import settings
+    lan_ips = _get_lan_ips()
+    port = int(settings.get("server.port", 8765))
+    return JSONResponse({
+        "ok": True,
+        "app": "synthia",
+        "name": "SYNTHIA · Command Bridge",
+        "hostname": socket.gethostname(),
+        "version": __version__,
+        "lan_ips": lan_ips,
+        "port": port,
+        "token": ACCESS_TOKEN,
+    })
+
+
+@app.post("/api/mobile/command")
+async def api_mobile_command(request: Request) -> JSONResponse:
+    """মোবাইল অ্যাপ থেকে টেক্সট কমান্ড → পিসিতে কাজ + ঐচ্ছিক ভয়েস উত্তর।"""
+    body = await request.json()
+    _check(body.get("token"))
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "empty text")
+    source = str(body.get("source") or "mobile")
+    if not source.startswith("mobile"):
+        source = "mobile"
+    reply = await agent.run(text, session="mobile", source=source)
+    audio_payload: dict[str, Any] | None = None
+    if body.get("speak_reply") and not voice.muted and reply:
+        try:
+            from .voice.tts import synthesize
+            audio_payload = await synthesize(reply, voice.persona)
+        except Exception:  # noqa: BLE001
+            audio_payload = None
+    await bus.emit("state", **state())
+    return JSONResponse({"ok": True, "reply": reply, "audio": audio_payload, "state": state()})
+
+
+@app.post("/api/mobile/voice")
+async def api_mobile_voice(request: Request) -> JSONResponse:
+    """মোবাইল অ্যাপের মাইক্রোফোন (WAV Base64) → পিসির STT + এজেন্ট কমান্ড + TTS উত্তর।"""
+    body = await request.json()
+    _check(body.get("token"))
+    audio_b64 = (body.get("audio_b64") or "").strip()
+    if not audio_b64:
+        raise HTTPException(400, "missing audio_b64")
+    if "," in audio_b64 and audio_b64.startswith("data:"):
+        audio_b64 = audio_b64.split(",", 1)[1]
+    try:
+        wav_bytes = base64.b64decode(audio_b64)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"invalid base64: {e}") from e
+    if len(wav_bytes) < 100:
+        raise HTTPException(400, "audio too short")
+
+    from .voice.stt import transcribe
+    await bus.emit("status", state="listening")
+    try:
+        transcript = await transcribe(wav_bytes)
+    except Exception as e:  # noqa: BLE001
+        await bus.emit("status", state="idle")
+        return JSONResponse({"ok": False, "error": str(e), "transcript": ""})
+
+    if not transcript:
+        await bus.emit("status", state="idle")
+        return JSONResponse({"ok": False, "error": "কথা স্পষ্ট বোঝা যায়নি — আবার বলুন", "transcript": ""})
+
+    reply = await agent.run(transcript, session="mobile", source="mobile_voice")
+    audio_payload: dict[str, Any] | None = None
+    if body.get("speak_reply", True) and not voice.muted and reply:
+        try:
+            from .voice.tts import synthesize
+            audio_payload = await synthesize(reply, voice.persona)
+        except Exception:  # noqa: BLE001
+            audio_payload = None
+    await bus.emit("state", **state())
+    return JSONResponse({
+        "ok": True,
+        "transcript": transcript,
+        "reply": reply,
+        "audio": audio_payload,
+        "state": state(),
+    })
+
+
+@app.post("/api/mobile/action")
+async def api_mobile_action(request: Request) -> JSONResponse:
+    """মোবাইল অ্যাপ থেকে 4G/Cloud Bridge বা Wi-Fi দিয়ে কন্ট্রোল অ্যাকশন (cancel/reset/confirm/model/delete)।"""
+    body = await request.json()
+    _check(body.get("token"))
+    action = str(body.get("action") or "").strip()
+    if action == "cancel":
+        kill_switch()
+    elif action == "reset":
+        agent.reset("mobile")
+        await bus.emit("signal", level="info", title="mobile", text="📱 নতুন মোবাইল চ্যাট শুরু")
+    elif action == "confirm":
+        safety.resolve(str(body.get("id")), bool(body.get("approved")), channel="mobile")
+    elif action == "set_model":
+        router.set_mode(body.get("mode", "auto"), body.get("model_id"), body.get("fallback_on_limit"))
+        await bus.emit("brain_state", **router.state())
+    elif action == "delete_thread":
+        from .learning.store import session_store
+        tid = str(body.get("thread_id") or "").strip()
+        if session_store.delete_thread(tid) and agent.active_mobile_thread == tid:
+            agent.reset("mobile")
+    elif action == "telemetry":
+        from .skills.system import telemetry
+        return JSONResponse({"ok": True, "telemetry": await asyncio.to_thread(telemetry), "state": state()})
+    await bus.emit("state", **state())
+    return JSONResponse({"ok": True, "state": state()})
 
 
 async def handle_ws_message(msg: dict[str, Any]) -> None:
@@ -309,7 +534,68 @@ async def handle_ws_message(msg: dict[str, Any]) -> None:
         try:
             router.delete_model(str(msg.get("model_id") or ""))
             await bus.emit("brain_state", **router.state())
-            await bus.emit("signal", level="info", title="model", text="🗑️ মডেলটি তালিকা থেকে সরানো হয়েছে")
+            await bus.emit("signal", level="info", title="model", text="🗑️ মডেলটি মুছে ফেলা হয়েছে (নিচে থেকে রিস্টোর করা যাবে)")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "delete_provider":
+        try:
+            pname = str(msg.get("provider_name") or "")
+            cnt = router.delete_provider(pname, bool(msg.get("clear_key")))
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="info", title="model", text=f"🗑️ '{pname}' এর {cnt}টি মডেল সরানো হয়েছে (রিস্টোর করা যাবে)")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "restore_model":
+        try:
+            restored = router.restore_model(str(msg.get("model_id") or ""))
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="ok", title="model", text=f"♻️ মডেল রিস্টোর হয়েছে: {restored.get('label')}")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "restore_default_models":
+        try:
+            cnt = router.restore_default_models()
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="ok", title="model",
+                           text=f"♻️ {cnt}টি ডিফল্ট মডেল রিস্টোর ও সব কনফিগ ঠিক করা হয়েছে!" if cnt else "♻️ সব ডিফল্ট মডেল ও কনফিগ রিস্টোর হয়েছে!")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "reset_single_default":
+        try:
+            router.reset_single_default(str(msg.get("model_id") or ""))
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="ok", title="model", text="♻️ মডেলটি ডিফল্ট সেটিংয়ে রিসেট হয়েছে")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "purge_deleted_model":
+        try:
+            router.purge_deleted_model(str(msg.get("model_id") or ""))
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="info", title="model", text="🗑️ মডেলটি স্থায়ীভাবে মুছে ফেলা হয়েছে")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "update_provider":
+        try:
+            pname = str(msg.get("provider_name") or "")
+            count = router.update_provider(pname, dict(msg.get("updates") or {}))
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="ok", title="model", text=f"✏️ {pname}-এর সেটিংস আপডেট হয়েছে ({count}টি মডেল)")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "restore_provider":
+        try:
+            pname = str(msg.get("provider_name") or "")
+            count = router.restore_provider(pname)
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="ok", title="model", text=f"♻️ {pname} পুনরুদ্ধার হয়েছে ({count}টি মডেল)")
+        except Exception as e:  # noqa: BLE001
+            await bus.emit("signal", level="error", title="model", text=str(e))
+    elif kind == "purge_deleted_provider":
+        try:
+            pname = str(msg.get("provider_name") or "")
+            count = router.purge_deleted_provider(pname)
+            await bus.emit("brain_state", **router.state())
+            await bus.emit("signal", level="info", title="model", text=f"🗑️ {pname} স্থায়ীভাবে মুছে ফেলা হয়েছে ({count}টি)")
         except Exception as e:  # noqa: BLE001
             await bus.emit("signal", level="error", title="model", text=str(e))
     elif kind == "reset_cooldowns":
@@ -363,7 +649,32 @@ async def handle_ws_message(msg: dict[str, Any]) -> None:
         kill_switch()
     elif kind == "reset":
         agent.reset("ui")
+        await bus.emit("state", **state())
         await bus.emit("signal", level="info", title="reset", text="নতুন কথোপকথন শুরু")
+    elif kind == "load_chat_thread":
+        from .learning.store import session_store
+        tid = str(msg.get("thread_id") or "").strip()
+        msgs = session_store.get_thread_messages(tid)
+        if msgs:
+            if tid.startswith("mob_"):
+                agent.active_mobile_thread = tid
+                agent.histories["mobile"] = [{"role": m["role"], "content": m["content"]} for m in msgs]
+            else:
+                if tid.startswith("chat_"):
+                    agent.active_thread = tid
+                agent.histories["ui"] = [{"role": m["role"], "content": m["content"]} for m in msgs]
+        await bus.emit("chat_thread_loaded", thread_id=tid, messages=msgs)
+        await bus.emit("state", **state())
+    elif kind == "delete_chat_thread":
+        from .learning.store import session_store
+        tid = str(msg.get("thread_id") or "").strip()
+        if session_store.delete_thread(tid):
+            if agent.active_thread == tid:
+                agent.reset("ui")
+            if agent.active_mobile_thread == tid:
+                agent.reset("mobile")
+            await bus.emit("signal", level="info", title="history", text="🗑️ চ্যাট হিস্ট্রি মুছে ফেলা হয়েছে")
+        await bus.emit("state", **state())
     elif kind == "state":
         await bus.emit("state", **state())
     elif kind == "install_shortcuts":
@@ -408,10 +719,8 @@ def kill_switch() -> None:
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
-    if not _is_local_request(ws.headers.get("host"), ws.headers.get("origin")):
-        await ws.close(code=4403)
-        return
-    if ws.query_params.get("token") != ACCESS_TOKEN:
+    tok = ws.query_params.get("token")
+    if not tok or not secrets.compare_digest(tok, ACCESS_TOKEN):
         await ws.close(code=4401)
         return
     await ws.accept()

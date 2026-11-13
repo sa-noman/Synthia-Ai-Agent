@@ -18,11 +18,23 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/140.0 Safari/537.36")
 
 
-@tool("open_url", "Open a website URL in the browser.", {"url": {"type": "string"}},
-      required=["url"], category="web")
-def open_url(url: str) -> str:
-    if not re.match(r"^[a-z]+://", url):
+@tool(
+    "open_url",
+    "Open a website URL in Synthia's browser profile (e.g. https://gemini.google.com for Gemini website, https://chatgpt.com, https://google.com).",
+    {"url": {"type": "string"}},
+    required=["url"],
+    category="web",
+)
+async def open_url(url: str) -> str:
+    from .ai_bridge import open_in_synthia_browser
+
+    clean = (url or "").strip().lower().rstrip("/")
+    if clean in ("gemini", "https://gemini.com", "http://gemini.com", "https://www.gemini.com"):
+        url = "https://gemini.google.com"
+    elif not re.match(r"^[a-z]+://", url):
         url = "https://" + url
+    if await open_in_synthia_browser(url):
+        return f"OK: opened {url} in Synthia browser profile"
     webbrowser.open(url)
     return f"OK: opened {url}"
 
@@ -31,6 +43,8 @@ def open_url(url: str) -> str:
       {"query": {"type": "string", "description": "what to play, e.g. 'Arijit Singh latest song'"}},
       required=["query"], category="web")
 async def play_youtube(query: str) -> str:
+    from .ai_bridge import open_in_synthia_browser
+
     search = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
     try:
         async with httpx.AsyncClient(timeout=10, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"}) as c:
@@ -38,13 +52,17 @@ async def play_youtube(query: str) -> str:
         ids = re.findall(r'"videoId":"([\w-]{11})"', r.text)
         titles = re.findall(r'"title":\{"runs":\[\{"text":"(.*?)"\}', r.text)
     except httpx.HTTPError:
-        webbrowser.open(search)
+        if not await open_in_synthia_browser(search):
+            webbrowser.open(search)
         return f"Offline/blocked — opened YouTube search page for '{query}'."
     if not ids:
-        webbrowser.open(search)
+        if not await open_in_synthia_browser(search):
+            webbrowser.open(search)
         return f"Could not find a direct video; opened search results for '{query}'."
     vid = ids[0]
-    webbrowser.open(f"https://www.youtube.com/watch?v={vid}&autoplay=1")
+    watch_url = f"https://www.youtube.com/watch?v={vid}&autoplay=1"
+    if not await open_in_synthia_browser(watch_url):
+        webbrowser.open(watch_url)
     title = html.unescape(titles[0]) if titles else vid
     return f"OK: playing on YouTube: {title}"
 

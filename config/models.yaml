@@ -1,128 +1,106 @@
 # ==========================================================
 #  Synthia - মডেল তালিকা (Brain)
-# ----------------------------------------------------------
-#  - local মডেল নেট ছাড়াই চলে (Ollama)
-#  - cloud মডেল চলবে শুধু যদি .env ফাইলে তার API key দেওয়া থাকে
-#  - priority: ছোট সংখ্যা = আগে চেষ্টা করবে (auto মোডে)
-#  - একটার লিমিট শেষ হলে (429 / quota) অটোমেটিক পরেরটায় সুইচ করবে
+#  UI বা এই ফাইল থেকে মডেল এবং priority কাস্টমাইজ করা যাবে।
 # ==========================================================
 models:
-  # ---------------- GOOGLE AI STUDIO ----------------
-  - id: gemini-flash
-    label: "Gemini 3.5 Flash (Google AI Studio)"
-    provider_name: "Google AI Studio"
-    provider: openai_compat
-    base_url: https://generativelanguage.googleapis.com/v1beta/openai
-    model: gemini-3.5-flash
-    api_key_env: GEMINI_API_KEY
-    vision: true
-    priority: 10
-
-  - id: gemini-38-flash
-    label: "Gemini 3.8 Flash (Google AI Studio)"
-    provider_name: "Google AI Studio"
-    provider: openai_compat
-    base_url: https://generativelanguage.googleapis.com/v1beta/openai
-    model: gemini-3.8-flash
-    api_key_env: GEMINI_API_KEY
-    vision: true
-    priority: 12
-
-  - id: gemini-31-pro
-    label: "Gemini 3.1 Pro (Google AI Studio)"
-    provider_name: "Google AI Studio"
-    provider: openai_compat
-    base_url: https://generativelanguage.googleapis.com/v1beta/openai
-    model: gemini-3.1-pro-preview
-    api_key_env: GEMINI_API_KEY
-    vision: true
-    priority: 15
-
-  # ---------------- OPENROUTER ----------------
-  - id: openrouter-nemotron
-    label: "Nemotron 3.5 Lightning (OpenRouter Free)"
-    provider_name: "OpenRouter"
-    provider: openai_compat
-    base_url: https://openrouter.ai/api/v1
-    model: nvidia/nemotron-3.5-lightning:free
-    api_key_env: OPENROUTER_API_KEY
-    priority: 20
-
-  - id: openrouter-gemma
-    label: "Gemma 4 31B (OpenRouter Free)"
-    provider_name: "OpenRouter"
-    provider: openai_compat
-    base_url: https://openrouter.ai/api/v1
-    model: google/gemma-4-31b-it:free
-    api_key_env: OPENROUTER_API_KEY
-    priority: 22
-
-  - id: openrouter-lfm
-    label: "LFM 2.5 (OpenRouter Free)"
-    provider_name: "OpenRouter"
-    provider: openai_compat
-    base_url: https://openrouter.ai/api/v1
-    model: liquid/lfm-2.5-2.6b:free
-    api_key_env: OPENROUTER_API_KEY
-    priority: 24
-
-  # ---------------- LOCAL (OLLAMA) ----------------
-  - id: local-gemma4
-    label: "Gemma 4 E4B (Local)"
-    provider_name: "Ollama (Local)"
-    provider: ollama
-    base_url: http://127.0.0.1:11434
-    model: gemma4:e4b
-    vision: true
-    priority: 100
-    num_ctx: 8192
-
-  # ---------------- GROQ ----------------
-  - id: groq-llama
-    label: "Llama 3.3 70B (Groq)"
-    provider_name: "Groq"
-    provider: openai_compat
-    base_url: https://api.groq.com/openai/v1
-    model: llama-3.3-70b-versatile
-    api_key_env: GROQ_API_KEY
-    priority: 30
-
-  # ---------------- CEREBRAS ----------------
-  - id: cerebras-llama
-    label: "Llama 3.3 70B (Cerebras)"
-    provider_name: "Cerebras"
-    provider: openai_compat
-    base_url: https://api.cerebras.ai/v1
-    model: llama-3.3-70b
-    api_key_env: CEREBRAS_API_KEY
-    priority: 40
-
-  # ---------------- MISTRAL AI ----------------
-  - id: mistral-small
-    label: "Mistral Small (Mistral AI)"
-    provider_name: "Mistral AI"
-    provider: openai_compat
-    base_url: https://api.mistral.ai/v1
-    model: mistral-small-latest
-    api_key_env: MISTRAL_API_KEY
-    priority: 50
-
-  # ---------------- GITHUB MODELS ----------------
-  - id: github-gpt
-    label: "GPT-4.1 mini (GitHub Models)"
-    provider_name: "GitHub Models"
-    provider: openai_compat
-    base_url: https://models.github.ai/inference
-    model: openai/gpt-4.1-mini
-    api_key_env: GITHUB_TOKEN
-    priority: 60
-
-  # ---------------- NVIDIA NIM ----------------
-  - id: nvidia-nim
-    label: "Llama 3.3 70B (NVIDIA NIM)"
-    provider_name: "NVIDIA NIM"
-    provider: openai_compat
-    base_url: https://integrate.api.nvidia.com/v1
-    model: meta/llama-3.3-70b-instruct
-    api_key_env: NVIDIA_API_KEY
-    priority: 70
+- id: gemini-38-flash
+  label: Gemini 3.8 Flash (Google AI Studio)
+  provider_name: Google AI Studio
+  provider: openai_compat
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: gemini-3.8-flash
+  api_key_env: GEMINI_API_KEY
+  vision: true
+  priority: 12
+- id: gemini-31-pro
+  label: Gemini 3.1 Pro (Google AI Studio)
+  provider_name: Google AI Studio
+  provider: openai_compat
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: gemini-3.1-pro-preview
+  api_key_env: GEMINI_API_KEY
+  vision: true
+  priority: 15
+- id: openrouter-nemotron
+  label: Nemotron 3.5 Lightning (OpenRouter Free)
+  provider_name: OpenRouter
+  provider: openai_compat
+  base_url: https://openrouter.ai/api/v1
+  model: nvidia/nemotron-3.5-lightning:free
+  api_key_env: OPENROUTER_API_KEY
+  priority: 20
+- id: openrouter-gemma
+  label: Gemma 4 31B (OpenRouter Free)
+  provider_name: OpenRouter
+  provider: openai_compat
+  base_url: https://openrouter.ai/api/v1
+  model: google/gemma-4-31b-it:free
+  api_key_env: OPENROUTER_API_KEY
+  priority: 22
+- id: openrouter-lfm
+  label: LFM 2.5 (OpenRouter Free)
+  provider_name: OpenRouter
+  provider: openai_compat
+  base_url: https://openrouter.ai/api/v1
+  model: liquid/lfm-2.5-2.6b:free
+  api_key_env: OPENROUTER_API_KEY
+  priority: 24
+- id: local-qwen
+  label: Qwen 2.5 7B (Local · Best Offline Bangla)
+  provider_name: Ollama (Local)
+  provider: ollama
+  base_url: http://127.0.0.1:11434
+  model: qwen2.5:7b
+  vision: false
+  priority: 90
+  num_ctx: 8192
+- id: local-gemma4
+  label: Gemma 4 E4B (Local)
+  provider_name: Ollama (Local)
+  provider: ollama
+  base_url: http://127.0.0.1:11434
+  model: gemma4:e4b
+  vision: true
+  priority: 100
+  num_ctx: 8192
+- id: groq-llama
+  label: Llama 3.3 70B (Groq)
+  provider_name: Groq
+  provider: openai_compat
+  base_url: https://api.groq.com/openai/v1
+  model: llama-3.3-70b-versatile
+  api_key_env: GROQ_API_KEY
+  priority: 30
+- id: cerebras-llama
+  label: Llama 3.3 70B (Cerebras)
+  provider_name: Cerebras
+  provider: openai_compat
+  base_url: https://api.cerebras.ai/v1
+  model: llama-3.3-70b
+  api_key_env: CEREBRAS_API_KEY
+  priority: 40
+- id: mistral-small
+  label: Mistral Small (Mistral AI)
+  provider_name: Mistral AI
+  provider: openai_compat
+  base_url: https://api.mistral.ai/v1
+  model: mistral-small-latest
+  api_key_env: MISTRAL_API_KEY
+  priority: 50
+- id: nvidia-nim
+  label: Llama 3.3 70B (NVIDIA NIM)
+  provider_name: NVIDIA NIM
+  provider: openai_compat
+  base_url: https://integrate.api.nvidia.com/v1
+  model: meta/llama-3.3-70b-instruct
+  api_key_env: NVIDIA_API_KEY
+  priority: 70
+- id: gemini-flash
+  label: Gemini 3.5 Flash (Google AI Studio)
+  provider_name: Google AI Studio
+  provider: openai_compat
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: gemini-3.5-flash
+  api_key_env: GEMINI_API_KEY
+  vision: true
+  priority: 10

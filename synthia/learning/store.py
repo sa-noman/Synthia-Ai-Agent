@@ -320,6 +320,94 @@ class SessionStore:
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
 
+    def _build_threads(self) -> list[dict[str, Any]]:
+        with self._conn() as c:
+            rows = c.execute("SELECT id, session, role, content, ts FROM messages ORDER BY id ASC").fetchall()
+
+        threads_map: dict[str, list[dict[str, Any]]] = {}
+        order: list[str] = []
+        legacy_idx: dict[str, int] = {}
+        legacy_last_ts: dict[str, float] = {}
+
+        for r in rows:
+            sess = str(r["session"] or "ui")
+            ts = float(r["ts"] or 0.0)
+            if sess.startswith("chat_") or sess.startswith("mob_"):
+                tid = sess
+            else:
+                if sess not in legacy_idx or (ts - legacy_last_ts.get(sess, 0.0) > 900):
+                    legacy_idx[sess] = legacy_idx.get(sess, 0) + 1
+                legacy_last_ts[sess] = ts
+                tid = f"legacy_{sess}_{legacy_idx[sess]}"
+            if tid not in threads_map:
+                threads_map[tid] = []
+                order.append(tid)
+            threads_map[tid].append({
+                "id": int(r["id"]),
+                "role": str(r["role"]),
+                "content": str(r["content"] or ""),
+                "ts": ts,
+            })
+
+        out: list[dict[str, Any]] = []
+        for tid in reversed(order):
+            msgs = threads_map[tid]
+            if not msgs:
+                continue
+            is_mobile = tid.startswith("mob_") or tid.startswith("legacy_mobile")
+            first_user = next((m["content"] for m in msgs if m["role"] == "user"), msgs[0]["content"])
+            title = first_user.replace("\n", " ").strip()[:70] or "Conversation"
+            last_msg = msgs[-1]["content"].replace("\n", " ").strip()[:100]
+            ts_str = time.strftime("%d %b · %I:%M %p", time.localtime(msgs[-1]["ts"]))
+            out.append({
+                "id": tid,
+                "is_mobile": is_mobile,
+                "title": title,
+                "preview": last_msg,
+                "ts": ts_str,
+                "msg_count": len(msgs),
+                "row_ids": [m["id"] for m in msgs],
+                "messages": [
+                    {
+                        "role": m["role"],
+                        "content": m["content"],
+                        "ts": time.strftime("%I:%M %p", time.localtime(m["ts"])),
+                    }
+                    for m in msgs
+                ],
+            })
+        return out
+
+    def list_threads(self, limit: int = 40, mobile: bool | None = None) -> list[dict[str, Any]]:
+        threads = self._build_threads()
+        if mobile is True:
+            threads = [t for t in threads if t.get("is_mobile")]
+        elif mobile is False:
+            threads = [t for t in threads if not t.get("is_mobile")]
+        threads = threads[:limit]
+        for t in threads:
+            t.pop("row_ids", None)
+        return threads
+
+    def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
+        for t in self._build_threads():
+            if t["id"] == thread_id:
+                return list(t["messages"])
+        return []
+
+    def delete_thread(self, thread_id: str) -> bool:
+        target = next((t for t in self._build_threads() if t["id"] == thread_id), None)
+        if not target:
+            return False
+        row_ids = target.get("row_ids") or []
+        if not row_ids:
+            return False
+        placeholders = ",".join("?" for _ in row_ids)
+        with self._lock, self._conn() as c:
+            c.execute(f"DELETE FROM messages_fts WHERE rowid IN ({placeholders})", row_ids)
+            c.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", row_ids)
+        return True
+
 
 memory_store = MemoryStore()
 skill_store = SkillStore()

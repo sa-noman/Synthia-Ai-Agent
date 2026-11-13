@@ -29,7 +29,9 @@ class Settings:
     def reload(self) -> None:
         load_dotenv(ROOT / ".env", override=True)
         self.data = _load_yaml("settings.yaml")
-        self.models: list[dict[str, Any]] = _load_yaml("models.yaml").get("models", [])
+        raw_models = _load_yaml("models.yaml")
+        self.models: list[dict[str, Any]] = raw_models.get("models", [])
+        self.deleted_models: list[dict[str, Any]] = raw_models.get("deleted_models", [])
 
     def get(self, dotted: str, default: Any = None) -> Any:
         node: Any = self.data
@@ -94,17 +96,35 @@ class Settings:
             new_lines.append(f"{name}={value}")
         env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
-    def save_models(self, models_list: list[dict[str, Any]]) -> None:
+    def save_models(self, models_list: list[dict[str, Any]], deleted_list: list[dict[str, Any]] | None = None) -> None:
         path = CONFIG_DIR / "models.yaml"
+        if deleted_list is not None:
+            self.deleted_models = deleted_list
         header = (
             "# ==========================================================\n"
             "#  Synthia - মডেল তালিকা (Brain)\n"
             "#  UI বা এই ফাইল থেকে মডেল এবং priority কাস্টমাইজ করা যাবে।\n"
             "# ==========================================================\n"
         )
-        content = yaml.safe_dump({"models": models_list}, allow_unicode=True, sort_keys=False)
+        payload: dict[str, Any] = {"models": models_list}
+        if self.deleted_models:
+            payload["deleted_models"] = self.deleted_models
+        content = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
         path.write_text(header + content, encoding="utf-8")
         self.models = models_list
+
+    def save_brain_config(self, mode: str, manual_model: str) -> None:
+        import re
+        self.data.setdefault("brain", {})
+        self.data["brain"]["mode"] = mode
+        self.data["brain"]["manual_model"] = manual_model
+        path = CONFIG_DIR / "settings.yaml"
+        if not path.exists():
+            return
+        raw = path.read_text(encoding="utf-8")
+        raw = re.sub(r"(?m)^(\s*mode:\s*).*$", rf"\g<1>{mode}", raw, count=1)
+        raw = re.sub(r"(?m)^(\s*manual_model:\s*).*$", rf"\g<1>{manual_model}", raw, count=1)
+        path.write_text(raw, encoding="utf-8")
 
 
 settings = Settings()

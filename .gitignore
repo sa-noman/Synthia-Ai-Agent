@@ -6,3 +6,6 @@ synthia_data/
 workspace/
 logs/
 backups/
+build/
+*.idsig
+
