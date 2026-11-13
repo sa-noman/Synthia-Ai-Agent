@@ -175,6 +175,16 @@ class DesktopShell:
         try:
             self.window.show()
             self.window.restore()
+            if os.name == "nt":
+                try:
+                    import ctypes
+                    user32 = ctypes.windll.user32
+                    hwnd = user32.FindWindowW(None, "SYNTHIA · Command Bridge")
+                    if hwnd:
+                        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                        user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
             return True
         except Exception:  # noqa: BLE001
             return False

@@ -47,10 +47,48 @@ def _focus_existing(rt_file) -> bool:
         info = json.loads(rt_file.read_text(encoding="utf-8"))
         u = f"http://{info['host']}:{info['port']}/api/show?token={urllib.parse.quote(info['token'])}"
         req = urllib.request.Request(u, data=b"", method="POST")
-        with urllib.request.urlopen(req, timeout=1.5) as r:
-            return r.status == 200
+        with urllib.request.urlopen(req, timeout=2.0) as r:
+            if r.status == 200:
+                body = r.read().decode("utf-8")
+                return '"shown":true' in body.replace(" ", "").lower()
     except Exception:  # noqa: BLE001
-        return False
+        pass
+    return False
+
+
+def _kill_stale_port_owner(port: int) -> bool:
+    """যদি কোনো অপ্রয়োজনীয়/অচল python প্রসেস পোর্টটি আটকে রেখে থাকে তবে তা কিল করে।"""
+    try:
+        import os
+        import psutil
+        current_pid = os.getpid()
+        killed = False
+        for conn in psutil.net_connections(kind="inet"):
+            if conn.laddr and conn.laddr.port == port:
+                pid = conn.pid
+                if pid and pid != current_pid:
+                    try:
+                        p = psutil.Process(pid)
+                        name = p.name().lower()
+                        if "python" in name or "synthia" in name:
+                            p.kill()
+                            killed = True
+                    except Exception:
+                        pass
+        if killed:
+            time.sleep(0.6)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _find_free_port(host: str, start_port: int = 8765, max_tries: int = 10) -> int:
+    """৮৭৬৫ পোর্ট কোনো কারণে ব্যস্ত থাকলে ডায়নামিকভাবে পরবর্তী ফ্রি পোর্ট খুঁজে নেয়।"""
+    for p in range(start_port, start_port + max_tries):
+        if _port_free(host, p):
+            return p
+    return start_port
 
 
 def _start_server(host: str, port: int) -> uvicorn.Server:
@@ -100,10 +138,16 @@ def main() -> None:
     rt_file = ROOT / "synthia_data" / "runtime.json"
 
     if not _port_free(host, port):
+        # ১. আগে চালু থাকা উইন্ডো সামনে আনার চেষ্টা
         if _focus_existing(rt_file):
             return
-        print(f"[synthia] পোর্ট {port} ব্যস্ত — Synthia হয়তো আগেই চালু আছে।")
-        sys.exit(1)
+
+        # ২. অচল বা হ্যাং হওয়া ব্যাকগ্রাউন্ড প্রসেস পোর্ট দখল করে থাকলে তা বন্ধ করো
+        _kill_stale_port_owner(port)
+
+        # ৩. যদি পোর্ট এখনো মুক্ত না হয়, পরবর্তী ফ্রি পোর্ট নাও যেন Synthia সবসময় নিশ্চিত ওপেন হয়
+        if not _port_free(host, port):
+            port = _find_free_port(host, port + 1)
 
     ensure_first_run_shortcuts()
     server = _start_server(host, port)

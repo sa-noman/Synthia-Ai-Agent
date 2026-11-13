@@ -336,7 +336,14 @@ async def favicon() -> FileResponse:
 async def api_show(token: str) -> JSONResponse:
     _check(token)
     shown = await asyncio.to_thread(shell.show_window)
-    return JSONResponse({"ok": True, "shown": bool(shown)})
+    if not shown:
+        import webbrowser
+        from .config import settings
+        p = int(settings.get("server.port", 8765))
+        u = f"http://127.0.0.1:{p}/?token={token}"
+        await asyncio.to_thread(webbrowser.open, u)
+        return JSONResponse({"ok": True, "shown": True, "mode": "browser"})
+    return JSONResponse({"ok": True, "shown": True, "mode": "window"})
 
 
 @app.get("/api/bootstrap")
