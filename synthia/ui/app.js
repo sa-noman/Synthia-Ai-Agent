@@ -2046,14 +2046,14 @@
       name: "Studio Media Squad",
       role: "ইমেজ ও মাল্টিমিডিয়া ল্যাব",
       ico: "🎬",
-      badge: "Coming Soon",
-      desc: "এআই ইমেজ জেনারেশন (FLUX / Imagen), স্মার্ট স্ক্রিনশট অ্যানালাইসিস এবং ভিডিও ও অডিও প্রসেসিং ইঞ্জিন।",
-      ready: false,
-      roadmap: [
-        "🎨 টেক্সট-টু-ইমেজ জেনারেশন (FLUX, Imagen 3, Stable Diffusion)",
-        "📸 লাইভ স্ক্রিনশট ও মাল্টিমোডাল ভিশন বিশ্লেষণ",
-        "🎵 অডিও ও ব্যাকগ্রাউন্ড সাউন্ডট্র্যাক ক্রিয়েশন",
-        "🎬 অটোমেটিক সাবটাইটেল ও ভিডিও ক্লিপ জেনারেশন",
+      badge: "Media Studio",
+      desc: "এআই ইমেজ জেনারেশন (FLUX / Imagen), লাইভ স্ক্রিন ক্যাপচার ও ভিশন বিশ্লেষণ এবং মাল্টিমিডিয়া প্রসেসিং ইঞ্জিন।",
+      ready: true,
+      actions: [
+        { ico: "🎨", label: "এআই দিয়ে ছবি তৈরি করুন (FLUX/Imagen)", prompt: "এই বর্ণনা অনুযায়ী একটি অসাধারণ সুন্দর ছবি জেনারেট করো: " },
+        { ico: "📸", label: "স্ক্রিনশট নিয়ে স্ক্রিনের অবস্থা বিশ্লেষণ করুন", cmd: "বর্তমান স্ক্রিনের স্ক্রিনশট নাও এবং স্ক্রিনে কী আছে বিশ্লেষণ করো" },
+        { ico: "🖼️", label: "ইমেজ বা ডায়াগ্রাম অ্যানালাইসিস করুন", prompt: "এই ছবিটির বিস্তারিত বিবরণ ও তথ্য বিশ্লেষণ করো: " },
+        { ico: "📁", label: "জেনারেট করা ছবির ফোল্ডার খুলুন", cmd: "workspace\\images ফোল্ডারটি খোলো" },
       ],
     },
     remote: {
@@ -2090,6 +2090,9 @@
     }
     if (squadId === "voice") {
       return allTools.filter((t) => effectiveCat(t) === "voice" || t.category === "voice");
+    }
+    if (squadId === "media") {
+      return allTools.filter((t) => effectiveCat(t) === "media" || t.category === "media");
     }
     return [];
   }
