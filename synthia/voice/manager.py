@@ -21,6 +21,7 @@ class VoiceManager:
         self.persona: str = "female"   # "female" (Synthia) | "male"
         self.muted: bool = False       # ভয়েস উত্তর চালু/বন্ধ
         self.mic_on: bool = False      # ইউনিফায়েড মাইক্রোফোন সুইচ (শুরুতে সম্পূর্ণ OFF!)
+        self.ptt_active: bool = False  # পুশ-টু-টক (Push-to-Talk) সক্রিয় কি না
         self.listening: bool = False   # এই মুহূর্তে মাইক খোলা আছে কি না
         self.transcribing: bool = False
         self.speaking: bool = False
@@ -29,6 +30,7 @@ class VoiceManager:
         self._abort_record = threading.Event()
         self._audio_done = asyncio.Event()
         self._mic_task: asyncio.Task | None = None
+        self._ptt_task: asyncio.Task | None = None
         self._speak_task: asyncio.Task | None = None
         self._last_level_emit = 0.0
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -41,6 +43,7 @@ class VoiceManager:
             "persona": self.persona,
             "muted": self.muted,
             "mic_on": self.mic_on,
+            "ptt_active": self.ptt_active,
             "listening": self.listening,
             "transcribing": self.transcribing,
             "speaking": self.speaking,
@@ -58,7 +61,7 @@ class VoiceManager:
             await self.stop_all()
 
     def _emit_level_threadsafe(self, level: float, is_voice: bool) -> None:
-        if not self.mic_on:
+        if not self.mic_on and not self.ptt_active:
             return
         now = time.monotonic()
         if now - self._last_level_emit < 0.06:
@@ -68,6 +71,86 @@ class VoiceManager:
             self._loop.call_soon_threadsafe(
                 lambda: bus.emit_nowait("voice_level", level=round(level, 3), speech=is_voice)
             )
+
+    # ---------- পুশ-টু-টক (Push-to-Talk) ----------
+    async def start_ptt(self) -> None:
+        """বাটন চেপে ধরে কথা বলা শুরু (Push-to-Talk Start)।"""
+        if self.ptt_active or self.transcribing or agent.busy:
+            return
+        self._loop = asyncio.get_running_loop()
+        if self.speaking:
+            await self.stop_speaking()
+
+        self.ptt_active = True
+        self.listening = True
+        self._abort_record.clear()
+        self._stop_record.clear()
+        await self.broadcast_state()
+        await bus.emit("status", state="listening")
+        await bus.emit("signal", level="info", title="ptt", text="🎙️ Listening (PTT)...")
+        self._ptt_task = asyncio.create_task(self._ptt_worker())
+
+    async def stop_ptt(self) -> None:
+        """বাটন ছেড়ে দিলে রেকর্ডিং শেষ করে সাথে সাথে ট্রান্সক্রাইব শুরু (Push-to-Talk Release)।"""
+        if not self.ptt_active:
+            return
+        self._stop_record.set()
+        if self._ptt_task and not self._ptt_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(self._ptt_task), timeout=5.0)
+            except Exception:
+                pass
+
+    async def _ptt_worker(self) -> None:
+        try:
+            wav = await asyncio.to_thread(
+                record_utterance,
+                self._stop_record,
+                self._abort_record,
+                self._emit_level_threadsafe,
+                wait_speech_sec=30.0,
+                silence_after_speech_sec=10.0,
+                max_duration_sec=60.0,
+                push_to_talk=True,
+            )
+            self.listening = False
+            self.ptt_active = False
+            await bus.emit("voice_level", level=0.0, speech=False)
+            await self.broadcast_state()
+
+            if self._abort_record.is_set() or not wav:
+                if not agent.busy and not self.speaking:
+                    await bus.emit("status", state="idle")
+                return
+
+            self.transcribing = True
+            await self.broadcast_state()
+            await bus.emit("status", state="thinking", step="কথা বোঝা হচ্ছে…")
+            try:
+                text = await transcribe(wav)
+            except Exception as e:
+                self.transcribing = False
+                await self.broadcast_state()
+                await bus.emit("status", state="idle")
+                await bus.emit("signal", level="error", title="stt", text=str(e))
+                return
+
+            self.transcribing = False
+            await self.broadcast_state()
+            if not text:
+                if not agent.busy and not self.speaking:
+                    await bus.emit("status", state="idle")
+                return
+
+            await bus.emit("signal", level="ok", title="voice", text=text[:90])
+            await agent.run(text, session="ui", source="voice")
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.listening = False
+            self.ptt_active = False
+            await bus.emit("voice_level", level=0.0, speech=False)
+            await self.broadcast_state()
 
     # ---------- কথা বলা (TTS) ----------
     async def speak(self, text: str) -> None:

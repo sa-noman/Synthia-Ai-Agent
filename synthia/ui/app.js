@@ -1394,6 +1394,22 @@
   const toggleMute = () => send({ type: "voice_mute", muted: !voiceState.muted });
   ["#btnSpeak", "#btnMuteTop", "#btnSpeakTop2"].forEach((s) => on(s, "click", toggleMute));
 
+  // Push-to-Talk (Spacebar hold when not focused in input/textarea)
+  let pttHeld = false;
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && !pttHeld && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+      pttHeld = true;
+      unlockAudio();
+      send({ type: "ptt_start" });
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "Space" && pttHeld) {
+      pttHeld = false;
+      send({ type: "ptt_stop" });
+    }
+  });
+
   /* ================= লেজার ও স্টেপ ================= */
   function taskStart(ev) {
     stepNo = 0;

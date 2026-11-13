@@ -10,9 +10,11 @@
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -92,10 +94,85 @@ def _parse_args(raw: Any) -> dict[str, Any]:
     if isinstance(raw, str) and raw.strip():
         try:
             v = json.loads(raw)
-            return v if isinstance(v, dict) else {"value": v}
-        except json.JSONDecodeError:
-            return {"_raw": raw}
+            if isinstance(v, dict):
+                return v
+            return {"value": v}
+        except Exception:
+            pass
+
+        try:
+            fixed = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw)
+            v = json.loads(fixed)
+            if isinstance(v, dict):
+                return v
+        except Exception:
+            pass
+
+        try:
+            v = ast.literal_eval(raw)
+            if isinstance(v, dict):
+                return v
+        except Exception:
+            pass
+
+        return {"_raw": raw}
     return {}
+
+
+def _extract_text_tool_calls(content: str, tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """OpenJarvis ReAct / text fallback parser for models that output tool calls in markdown or text."""
+    if not content or not tools:
+        return []
+    tool_map = {t["function"]["name"]: t["function"] for t in tools if "function" in t}
+    if not tool_map:
+        return []
+
+    calls = []
+
+    # 1. Action: <tool_name>\nAction Input: <json/args>
+    act_m = re.search(r"Action:\s*([a-zA-Z0-9_-]+)", content, re.IGNORECASE)
+    if act_m:
+        name = act_m.group(1).strip()
+        if name in tool_map:
+            inp_m = re.search(r"Action Input:\s*([^\n]+|\{[\s\S]*?\})", content, re.IGNORECASE)
+            raw_input = inp_m.group(1).strip() if inp_m else "{}"
+            calls.append({"id": "call_" + uuid.uuid4().hex[:8], "name": name, "arguments": _parse_args(raw_input)})
+            return calls
+
+    # 2. Fenced or raw JSON block with tool name
+    json_blocks = re.findall(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", content)
+    for jb in json_blocks:
+        try:
+            parsed = json.loads(jb)
+            name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
+            if name and name in tool_map:
+                args = parsed.get("arguments") or parsed.get("parameters") or parsed.get("args") or {}
+                calls.append({"id": "call_" + uuid.uuid4().hex[:8], "name": name, "arguments": _parse_args(args)})
+                return calls
+        except Exception:
+            pass
+
+    # 3. Python-like invocation: `tool_name(...)`
+    for name, schema in tool_map.items():
+        pattern = rf"(?:^|\n|`)\s*{re.escape(name)}\s*\((.*?)\)"
+        m = re.search(pattern, content, re.DOTALL)
+        if m:
+            arg_str = m.group(1).strip()
+            args = {}
+            if arg_str:
+                kv_matches = re.findall(r'([a-zA-Z0-9_]+)\s*=\s*(["\'])(.*?)\2', arg_str)
+                if kv_matches:
+                    for k, _, v in kv_matches:
+                        args[k] = v
+                else:
+                    clean_str = arg_str.strip('"\' ')
+                    props = list(schema.get("parameters", {}).get("properties", {}).keys())
+                    if props:
+                        args[props[0]] = clean_str
+            calls.append({"id": "call_" + uuid.uuid4().hex[:8], "name": name, "arguments": args})
+            return calls
+
+    return calls
 
 
 class BaseProvider:
@@ -176,7 +253,10 @@ class OllamaProvider(BaseProvider):
              "arguments": _parse_args(tc["function"].get("arguments"))}
             for tc in (msg.get("tool_calls") or [])
         ]
-        return {"content": msg.get("content") or "", "tool_calls": calls}
+        content = msg.get("content") or ""
+        if not calls and tools:
+            calls = _extract_text_tool_calls(content, tools)
+        return {"content": content, "tool_calls": calls}
 
 
 class OpenAICompatProvider(BaseProvider):

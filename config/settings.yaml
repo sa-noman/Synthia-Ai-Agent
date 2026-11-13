@@ -15,7 +15,7 @@ brain:
   # manual = UI থেকে যে মডেল বেছে দেবেন শুধু সেটাই চলবে
   mode: manual
   # manual মোডের ডিফল্ট মডেল (models.yaml-এর id)
-  manual_model: local-gemma4
+  manual_model: local-qwen
   max_steps: 12          # এক কমান্ডে সর্বোচ্চ কত ধাপ টুল চালাবে
   temperature: 0.3
 

@@ -15,8 +15,11 @@ from typing import Any
 from ..config import settings
 from ..learning import learning
 from .events import bus
+from .history import task_history
 from .llm.providers import LLMError
 from .llm.router import router
+from .loop_guard import LoopGuard
+from .monitoring import errors
 from .tools import registry
 
 SYSTEM_PROMPT = """You are **Synthia**, a powerful personal AI agent running locally on the user's Windows PC.
@@ -29,9 +32,15 @@ You can control the computer through tools: files, apps, browser, YouTube, syste
 
 # How to work
 - If a task needs action, CALL TOOLS. Do not just describe what you would do.
+- When calling a tool, use standard tool-calling or respond with:
+  Action: <tool_name>
+  Action Input: {{"param": "value"}}
 - Break multi-step tasks into steps and call tools one by one; check each result before continuing.
 - Use folder shortcuts like "desktop", "downloads", "documents", "pictures", "videos", "music", "workspace".
 - Save anything you create (scripts, reports, media) inside the "workspace" folder unless the user says otherwise.
+- To modify existing files without rewriting everything, use 'edit_file' (replace target text) or 'apply_patch'.
+- To run Python calculations, scripts, or data processing, use 'execute_python' or 'evaluate_math'.
+- To organize chaotic folders by file type, use 'organize_folder'.
 - If a tool returns ERROR, try to fix the problem (different path, search first) before giving up.
 - Never invent file names or results. If you are unsure where something is, use search_files.
 - When finished, give a brief summary of what you did (and paths of created files).
@@ -46,7 +55,7 @@ You can control the computer through tools: files, apps, browser, YouTube, syste
 - NEVER claim you lack tools to open or talk to Gemini, ChatGPT, Claude, or other AIs. Always call these tools.
 
 # Safety (STRICT)
-- Deleting, overwriting, or running shell commands ALWAYS requires the user's explicit approval.
+- Deleting, overwriting, editing files outside workspace, or running shell commands ALWAYS requires the user's explicit approval.
   The tool itself will ask the user — just call it. NEVER say something was deleted unless the tool confirmed success.
 - If the user denies, accept it and do not try another way to do the same thing.
 - Never post, send messages, or purchase anything without the user clearly asking for it.
@@ -65,6 +74,7 @@ class Agent:
         self.histories: dict[str, list[dict[str, Any]]] = {}
         self._lock = asyncio.Lock()
         self._cancel = asyncio.Event()
+        self.loop_guard = LoopGuard()
         self.busy = False
         self.active_thread: str = f"chat_{int(time.time())}"
         self.active_mobile_thread: str = f"mob_{int(time.time())}"
@@ -195,6 +205,7 @@ class Agent:
         async with self._lock:
             self.busy = True
             self._cancel.clear()
+            self.loop_guard.reset()
             task_id = uuid.uuid4().hex[:8]
             try:
                 return await self._run(text, session, source, images, task_id)
@@ -222,6 +233,7 @@ class Agent:
         n_tools = n_ok = 0
         await bus.emit("chat", role="user", text=text, source=source, session=session)
         await bus.emit("task_start", task_id=task_id, text=text, source=source)
+        task_history.start_task(task_id, text, source=source, session=session, model=router.active or "")
 
         max_steps = int(settings.get("brain.max_steps", 12))
         tools = registry.schemas()
@@ -236,6 +248,7 @@ class Agent:
             await bus.emit("chat", role="assistant", text=final, source=source, session=session,
                            model=used_model, model_label=used_model_label)
             await bus.emit("task_end", task_id=task_id)
+            task_history.finish_task(task_id, final, status="completed")
             learning.log_message(log_session, "assistant", final)
             return final
 
@@ -250,6 +263,7 @@ class Agent:
                 used_model = resp.get("model") or resp.get("model_id") or ""
                 used_model_label = resp.get("model_label") or ""
             except LLMError as e:
+                errors.record("brain_error", str(e))
                 final = f"⚠️ Brain error: {e}"
                 active_cfg = next((m for m in settings.models if m.get("id") == router.active), {})
                 used_model = active_cfg.get("model", router.active or "")
@@ -312,13 +326,26 @@ class Agent:
                 await bus.emit("status", state="acting", tool=c["name"])
                 await bus.emit("tool_start", task_id=task_id, step_id=step_id,
                                tool=c["name"], args=c["arguments"])
+                task_history.log_tool_start(task_id, step_id, c["name"], c["arguments"])
+
+                verdict = self.loop_guard.check_call(c["name"], c["arguments"])
                 t0 = time.time()
-                result = await registry.call(c["name"], c["arguments"])
-                ok = not result.startswith("ERROR") and not result.startswith("DENIED")
+                if verdict.blocked:
+                    await bus.emit("signal", level="warn", title="loop_guard", text=verdict.reason)
+                    result = f"ERROR (Loop Guard): {verdict.reason} Do NOT repeat this tool call. Synthesize your final answer or try an alternative tool."
+                    ok = False
+                else:
+                    if verdict.warned:
+                        await bus.emit("signal", level="warn", title="loop_guard", text=verdict.reason)
+                    result = await registry.call(c["name"], c["arguments"])
+                    ok = not result.startswith("ERROR") and not result.startswith("DENIED")
+
+                elapsed_ms = int((time.time() - t0) * 1000)
                 n_tools += 1
                 n_ok += int(ok)
                 await bus.emit("tool_end", task_id=task_id, step_id=step_id, tool=c["name"],
-                               ok=ok, result=result[:600], ms=int((time.time() - t0) * 1000))
+                               ok=ok, result=result[:600], ms=elapsed_ms)
+                task_history.log_tool_end(task_id, step_id, c["name"], ok, result, ms=elapsed_ms)
                 history.append({"role": "tool", "tool_call_id": c["id"], "name": c["name"],
                                 "content": result})
         else:
@@ -328,6 +355,8 @@ class Agent:
         # images বড় — হিস্টোরি থেকে সরিয়ে ফেলি
         for m in history:
             m.pop("images", None)
+        status = "cancelled" if self._cancel.is_set() else ("error" if final.startswith("⚠️") else "completed")
+        task_history.finish_task(task_id, final, status=status)
         await bus.emit("chat", role="assistant", text=final, source=source, session=session,
                        model=used_model, model_label=used_model_label)
         await bus.emit("task_end", task_id=task_id)

@@ -253,3 +253,64 @@ def file_info(path: str) -> str:
     else:
         info["size"] = _human(st.st_size)
     return info
+
+
+_EXT_CATEGORIES = {
+    "Documents": {".pdf", ".docx", ".doc", ".txt", ".xlsx", ".pptx", ".csv", ".md", ".rtf"},
+    "Images": {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"},
+    "Audio": {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"},
+    "Videos": {".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv"},
+    "Archives": {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"},
+    "Code": {".py", ".js", ".ts", ".html", ".css", ".json", ".yaml", ".yml", ".cpp", ".cs", ".java"},
+    "Installers": {".exe", ".msi", ".apk", ".iso"},
+}
+
+
+@tool("organize_folder", "Organize files in a folder into categorized subfolders (Documents, Images, Audio, Videos, etc).",
+      {"path": {"type": "string", "description": "Folder path or shortcut to organize"},
+       "dry_run": {"type": "boolean", "description": "If True, only previews the organization plan without moving files"}},
+      required=["path"], category="files")
+async def organize_folder(path: str, dry_run: bool = False) -> str:
+    folder = resolve(path)
+    if not folder.exists() or not folder.is_dir():
+        return f"ERROR: Folder not found: {folder}"
+
+    moves = []
+    for item in folder.iterdir():
+        if item.is_file():
+            ext = item.suffix.lower()
+            cat = "Others"
+            for category, exts in _EXT_CATEGORIES.items():
+                if ext in exts:
+                    cat = category
+                    break
+            moves.append((item, folder / cat / item.name))
+
+    if not moves:
+        return f"No loose files to organize in {folder}."
+
+    summary = {c: sum(1 for _, dest in moves if dest.parent.name == c) for c in set(d.parent.name for _, d in moves)}
+    if dry_run:
+        return f"Plan for {folder}: " + ", ".join(f"{c}: {n}" for c, n in summary.items())
+
+    ok = await safety.request(
+        "organize_folder",
+        f"📂 ফোল্ডার গোছানো: {folder.name}",
+        {"folder": str(folder), "file_count": len(moves), "categories": summary},
+    )
+    if not ok:
+        return "DENIED: User did not approve organizing this folder."
+
+    moved_count = 0
+    for src, dst in moves:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        target_path = dst
+        idx = 1
+        while target_path.exists():
+            target_path = dst.parent / f"{dst.stem}_{idx}{dst.suffix}"
+            idx += 1
+        shutil.move(str(src), str(target_path))
+        moved_count += 1
+
+    return f"OK: Organized {moved_count} file(s) in {folder}. Categories: " + ", ".join(f"{c}: {n}" for c, n in summary.items())
+

@@ -118,9 +118,11 @@ def record_utterance(
     wait_speech_sec: float = 8.0,
     silence_after_speech_sec: float = 1.45,
     max_duration_sec: float = 35.0,
+    push_to_talk: bool = False,
 ) -> bytes | None:
     """একটি ভয়েস কমান্ড রেকর্ড করে WAV রিটার্ন করে।
     abort_event সেট হলে সাথে সাথে হার্ডওয়্যার বন্ধ করে None রিটার্ন করে (কিছুই প্রসেস হবে না)।
+    push_to_talk == True হলে বাটন ধরে রাখার সময় সাথে সাথে ক্যাপচার করে এবং ছেড়ে দিলে রিলিজ হয়।
     """
     if abort_event and abort_event.is_set():
         return None
@@ -149,9 +151,9 @@ def record_utterance(
 
     preroll: list[bytes] = []
     captured: list[bytes] = []
-    speaking = False
-    speech_chunks = 0
-    voiced_chunks = 0
+    speaking = bool(push_to_talk)
+    speech_chunks = 1 if push_to_talk else 0
+    voiced_chunks = 1 if push_to_talk else 0
     silence_chunks = 0
     noise_floor = 0.0055
     idx = 0

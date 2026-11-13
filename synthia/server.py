@@ -18,9 +18,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .channels.manager import channel_manager
 from .config import ROOT
 from .core.agent import agent
 from .core.events import bus
+from .core.history import task_history
 from .core.llm.router import router
 from .core.safety import safety
 from .core.tools import load_skills, registry
@@ -199,10 +201,12 @@ async def lifespan(app: FastAPI):
     MAIN_LOOP = asyncio.get_running_loop()
     task = asyncio.create_task(_telemetry_loop())
     asyncio.create_task(_warm_local_model())
+    asyncio.create_task(channel_manager.start_all())
     from .cloud_bridge import cloud_bridge
     cloud_bridge.start(app, ACCESS_TOKEN)
     yield
     await cloud_bridge.stop()
+    await channel_manager.stop_all()
     task.cancel()
 
 
@@ -280,6 +284,8 @@ def state() -> dict[str, Any]:
         "busy": agent.busy,
         "startup_enabled": is_startup_enabled(),
         "voice": voice.state(),
+        "channels": channel_manager.state(),
+        "task_history": task_history.list_history(15),
         "chat_history": session_store.list_threads(limit=40, mobile=False),
         "mobile_history": session_store.list_threads(limit=40, mobile=True),
         "active_thread": agent.active_thread,
@@ -345,6 +351,95 @@ async def api_bootstrap(request: Request) -> JSONResponse:
 async def api_state(token: str) -> JSONResponse:
     _check(token)
     return JSONResponse(state())
+
+
+@app.get("/api/agent/history")
+async def api_agent_history(token: str, limit: int = 50) -> JSONResponse:
+    _check(token)
+    return JSONResponse(task_history.list_history(limit))
+
+
+@app.get("/api/agent/task/{task_id}")
+async def api_agent_task(task_id: str, token: str) -> JSONResponse:
+    _check(token)
+    task = task_history.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return JSONResponse(task)
+
+
+@app.get("/api/agent/permissions")
+async def api_agent_permissions(token: str) -> JSONResponse:
+    _check(token)
+    tools_info = [
+        {"name": t.name, "description": t.description, "category": t.category, "risk": t.risk}
+        for t in registry.tools.values()
+    ]
+    return JSONResponse({"tools": tools_info, "pending": safety.pending})
+
+
+@app.get("/api/system/ollama")
+async def api_system_ollama(token: str) -> JSONResponse:
+    _check(token)
+    from .core.monitoring import get_ollama_info
+    return JSONResponse(await get_ollama_info())
+
+
+@app.get("/api/system/diagnostics")
+async def api_system_diagnostics(token: str) -> JSONResponse:
+    _check(token)
+    from .core.monitoring import get_diagnostics
+    return JSONResponse(await get_diagnostics())
+
+
+@app.get("/api/channels/status")
+async def api_channels_status(token: str) -> JSONResponse:
+    _check(token)
+    return JSONResponse(channel_manager.state())
+
+
+@app.post("/api/channels/{channel_name}/toggle")
+async def api_channel_toggle(channel_name: str, request: Request) -> JSONResponse:
+    tok = request.query_params.get("token")
+    enable = True
+    if request.headers.get("content-type") == "application/json":
+        try:
+            body = await request.json()
+            tok = body.get("token", tok)
+            enable = bool(body.get("enabled", True))
+        except Exception:
+            pass
+    _check(tok)
+    res = await channel_manager.toggle_channel(channel_name, enable)
+    return JSONResponse(res)
+
+
+@app.post("/api/voice/ptt_start")
+async def api_ptt_start(request: Request) -> JSONResponse:
+    tok = request.query_params.get("token")
+    if not tok and request.headers.get("content-type") == "application/json":
+        try:
+            body = await request.json()
+            tok = body.get("token")
+        except Exception:
+            pass
+    _check(tok)
+    await voice.start_ptt()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/voice/ptt_stop")
+async def api_ptt_stop(request: Request) -> JSONResponse:
+    tok = request.query_params.get("token")
+    if not tok and request.headers.get("content-type") == "application/json":
+        try:
+            body = await request.json()
+            tok = body.get("token")
+        except Exception:
+            pass
+    _check(tok)
+    await voice.stop_ptt()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/command")
@@ -707,6 +802,10 @@ async def handle_ws_message(msg: dict[str, Any]) -> None:
         await voice.set_persona(str(msg.get("persona", "female")))
     elif kind == "voice_mute":
         await voice.set_muted(bool(msg.get("muted")))
+    elif kind == "ptt_start":
+        await voice.start_ptt()
+    elif kind == "ptt_stop":
+        await voice.stop_ptt()
     elif kind == "audio_done":
         voice.notify_audio_done()
 
