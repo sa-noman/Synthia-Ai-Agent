@@ -42,6 +42,7 @@ You can control the computer through tools: files, apps, browser, YouTube, syste
 - To run Python calculations, scripts, or data processing, use 'execute_python' or 'evaluate_math'.
 - To organize chaotic folders by file type, use 'organize_folder'.
 - To generate AI images from text descriptions, use 'generate_image' (saves to workspace/images).
+- To create automated 15-second videos, reels, shorts, or cartoon animation clips with voiceover audio, 3D visuals, and background music, use 'create_short_video' (saves to workspace/videos).
 - To inspect or diagnose the user's desktop screen, use 'capture_screen' (with analyze=True).
 - To analyze any local image, photo, diagram, or chart, use 'analyze_image'.
 - If a tool returns ERROR, try to fix the problem (different path, search first) before giving up.
